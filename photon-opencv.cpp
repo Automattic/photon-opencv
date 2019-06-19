@@ -25,6 +25,36 @@ protected:
 
   static cmsHPROFILE _srgb_profile;
 
+  void _enforce8u() {
+    if (CV_8U != _img.depth()) {
+      /* Proper convertion is mostly guess work, but it's fairly rare and
+         these are reasonable assumptions */
+      double alpha, beta;
+      switch (_img.depth()) {
+        case CV_16U:
+          alpha = 1./256;
+          beta = 0;
+          break;
+
+        case CV_16S:
+          alpha = 1./256;
+          beta = 128;
+          break;
+
+        case CV_8S:
+          alpha = 1;
+          beta = 128;
+          break;
+
+        default:
+          alpha = 1;
+          beta = 0;
+          break;
+      }
+      _img.convertTo(_img, CV_8U, alpha, beta);
+    }
+  }
+
 public:
   Php::Value readimageblob(Php::Parameters &params) {
     std::string raw_image_data = params[0];
@@ -42,6 +72,9 @@ public:
       _last_error = "Failed to decode image";
       return false;
     }
+
+    /* Use any number of channels, but enforce 8 bits per channel */
+    _enforce8u();
 
     Exiv2::Image::AutoPtr exiv_img;
     try {
@@ -119,17 +152,20 @@ public:
 
     int storage_format;
     switch (_img.channels()) {
+      case 1:
+        storage_format = TYPE_GRAY_8;
+        break;
+
+      case 2:
+        storage_format = TYPE_GRAYA_8;
+        break;
+
       case 3:
         storage_format = TYPE_BGR_8;
         break;
 
       case 4:
-        // TODO: confirm it's not BGRA
-        storage_format = TYPE_ABGR_8;
-        break;
-
-      case 1:
-        storage_format = TYPE_GRAY_8;
+        storage_format = TYPE_BGRA_8;
         break;
 
       default:
@@ -141,14 +177,13 @@ public:
 
     cmsHTRANSFORM transform = cmsCreateTransform(
       embedded_profile, storage_format,
-      // TODO: confirm the format shouldn't be hardcoded to BGR
-      _srgb_profile, storage_format,
+      _srgb_profile, TYPE_BGR_8,
       INTENT_PERCEPTUAL, 0
     );
 
     cmsCloseProfile(embedded_profile);
 
-    cv::Mat transformed_img = cv::Mat(_img.rows, _img.cols, _img.type());
+    cv::Mat transformed_img = cv::Mat(_img.rows, _img.cols, CV_8UC3);
     cmsDoTransformLineStride(
         transform,
         _img.data, transformed_img.data,
