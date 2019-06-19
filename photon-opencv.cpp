@@ -5,7 +5,7 @@
 #include <opencv2/opencv.hpp>
 #include <exiv2/exiv2.hpp>
 #include <lcms2.h>
-#include "srgb_icc.h"
+#include "srgb.icc.h"
 
 #define check_image_loaded() { \
   if (_img.empty()) { \
