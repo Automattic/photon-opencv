@@ -25,6 +25,8 @@ protected:
 
   static cmsHPROFILE _srgb_profile;
 
+  static int _gmagick_channel_opacity;
+
   void _enforce8u() {
     if (CV_8U != _img.depth()) {
       /* Proper convertion is mostly guess work, but it's fairly rare and
@@ -56,6 +58,10 @@ protected:
   }
 
 public:
+  static void setconstants(Php::Parameters &params) {
+    _gmagick_channel_opacity = params[0];
+  };
+
   Php::Value readimageblob(Php::Parameters &params) {
     std::string raw_image_data = params[0];
 
@@ -265,14 +271,34 @@ public:
 
     return true;
   }
+
+  Php::Value getimagechanneldepth(Php::Parameters &params) {
+    check_image_loaded();
+
+    int channel = params[0];
+
+    /* Gmagick's channels don't map directly to OpenCV's, but Photon is only
+       interested in the opacity */
+    if (channel != _gmagick_channel_opacity) {
+      return 8;
+    }
+
+    /* Opacity channel is present with an even number number of channels */
+    return (_img.channels() & 1? 0 : 8);
+  }
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = NULL;
+int Photon_OpenCV::_gmagick_channel_opacity = -1;
 
 extern "C" {
   PHPCPP_EXPORT void *get_module() {
     static Php::Extension extension("photon-opencv", "0.1");
 
     Php::Class<Photon_OpenCV> photon_opencv("Photon_OpenCV");
+
+    photon_opencv.method<&Photon_OpenCV::setconstants>("setconstants", {
+      Php::ByVal("gmagick_channel_opacity", Php::Type::Numeric),
+    });
 
     photon_opencv.method<&Photon_OpenCV::readimageblob>("readimageblob", {
       Php::ByVal("raw_image_data", Php::Type::String),
@@ -287,6 +313,10 @@ extern "C" {
 
     photon_opencv.method<&Photon_OpenCV::getimagewidth>("getimagewidth");
     photon_opencv.method<&Photon_OpenCV::getimageheight>("getimageheight");
+    photon_opencv.method<&Photon_OpenCV::getimagechanneldepth>(
+      "getimagechanneldepth", {
+      Php::ByVal("channel", Php::Type::Numeric),
+    });
 
     photon_opencv.method<&Photon_OpenCV::getimageformat>("getimageformat");
     photon_opencv.method<&Photon_OpenCV::setimageformat>("setimageformat", {
