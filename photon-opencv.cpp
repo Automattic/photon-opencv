@@ -57,83 +57,7 @@ protected:
     }
   }
 
-public:
-  static void setconstants(Php::Parameters &params) {
-    _gmagick_channel_opacity = params[0];
-  };
-
-  Php::Value readimageblob(Php::Parameters &params) {
-    std::string raw_image_data = params[0];
-
-    if (raw_image_data.empty()) {
-      _last_error = "Input buffer is empty";
-      return false;
-    }
-
-    cv::Mat raw_data(1, raw_image_data.size(), CV_8UC1,
-      (void *) raw_image_data.data());
-    _img = cv::imdecode(raw_data, cv::IMREAD_UNCHANGED);
-
-    if (_img.empty()) {
-      _last_error = "Failed to decode image";
-      return false;
-    }
-
-    /* Use any number of channels, but enforce 8 bits per channel */
-    _enforce8u();
-
-    Exiv2::Image::AutoPtr exiv_img;
-    try {
-      exiv_img = Exiv2::ImageFactory::open(
-        (Exiv2::byte *) raw_image_data.data(), raw_image_data.size());
-      exiv_img->readMetadata();
-    }
-    catch (Exiv2::Error &error) {
-      _last_error = error.what();
-      return false;
-    }
-    switch (exiv_img->imageType()) {
-      case Exiv2::ImageType::png:
-        _format = "png";
-        break;
-
-      default:
-        _format = "jpg";
-    }
-
-    if (exiv_img->iccProfileDefined()) {
-      const Exiv2::DataBuf *profile = exiv_img->iccProfile();
-      _icc_profile.resize(profile->size_);
-      std::memcpy(_icc_profile.data(), profile->pData_, profile->size_);
-    }
-
-    // TODO: also implement this
-    _type = 0;
-
-    return true;
-  }
-
-  Php::Value writeimage(Php::Parameters &params) {
-    check_image_loaded();
-
-    std::string wanted_output = params[0];
-
-    std::string actual_output = wanted_output + "." + _format;
-    // TODO: parameters
-    if (!cv::imwrite(actual_output, _img)) {
-      _last_error = "Failed to encode image";
-      return false;
-    }
-
-    if (std::rename(actual_output.c_str(), wanted_output.c_str())) {
-      _last_error = "Failed to rename generate image";
-      return false;
-    }
-
-    return true;
-  }
-
-  Php::Value converttosrgb() {
+  bool _converttosrgb() {
     if (_icc_profile.empty()) {
       return true;
     }
@@ -205,6 +129,101 @@ public:
     return true;
   }
 
+public:
+  static void setconstants(Php::Parameters &params) {
+    _gmagick_channel_opacity = params[0];
+  };
+
+  Php::Value readimageblob(Php::Parameters &params) {
+    std::string raw_image_data = params[0];
+
+    if (raw_image_data.empty()) {
+      _last_error = "Input buffer is empty";
+      return false;
+    }
+
+    cv::Mat raw_data(1, raw_image_data.size(), CV_8UC1,
+      (void *) raw_image_data.data());
+    _img = cv::imdecode(raw_data, cv::IMREAD_UNCHANGED);
+
+    if (_img.empty()) {
+      _last_error = "Failed to decode image";
+      return false;
+    }
+
+    /* Use any number of channels, but enforce 8 bits per channel */
+    _enforce8u();
+
+    Exiv2::Image::AutoPtr exiv_img;
+    try {
+      exiv_img = Exiv2::ImageFactory::open(
+        (Exiv2::byte *) raw_image_data.data(), raw_image_data.size());
+      exiv_img->readMetadata();
+    }
+    catch (Exiv2::Error &error) {
+      _last_error = error.what();
+      return false;
+    }
+    switch (exiv_img->imageType()) {
+      case Exiv2::ImageType::png:
+        _format = "png";
+        break;
+
+      default:
+        _format = "jpeg";
+    }
+
+    if (exiv_img->iccProfileDefined()) {
+      const Exiv2::DataBuf *profile = exiv_img->iccProfile();
+      _icc_profile.resize(profile->size_);
+      std::memcpy(_icc_profile.data(), profile->pData_, profile->size_);
+    }
+
+    // TODO: also implement this
+    _type = 0;
+
+    return true;
+  }
+
+  Php::Value writeimage(Php::Parameters &params) {
+    check_image_loaded();
+
+    /* OpenCV strips the profile, we need to apply it first */
+    _converttosrgb();
+
+    std::string wanted_output = params[0];
+
+    std::vector<int> img_parameters;
+    if ("jpeg" == _format) {
+      img_parameters.push_back(cv::IMWRITE_JPEG_QUALITY);
+      img_parameters.push_back(_compression_quality);
+    }
+    else if ("png" == _format) {
+      /* GMagick uses a single scalar for storing two values:
+        _compressioN_quality = compression_level*10 + filter_type */
+      img_parameters.push_back(cv::IMWRITE_PNG_COMPRESSION);
+      img_parameters.push_back(_compression_quality/10);
+      /* OpenCV does not support setting the filters like GMagick,
+         instead we get to pick the strategy, so we ignore it
+         https://docs.opencv.org/4.1.0/d4/da8/group__imgcodecs.html */
+    }
+
+    /* OpenCV looks at the extension to determine the format.
+       We make sure it's there, then rename it to the expected filename. */
+    std::string actual_output = wanted_output + "." + _format;
+    if (!cv::imwrite(actual_output, _img, img_parameters)) {
+      _last_error = "Failed to encode image";
+      return false;
+    }
+    if (std::rename(actual_output.c_str(), wanted_output.c_str())) {
+      _last_error = "Failed to rename generated image";
+      return false;
+    }
+
+    return true;
+  }
+
+
   Php::Value getlasterror() {
     return _last_error;
   }
@@ -225,6 +244,8 @@ public:
   }
   Php::Value setimageformat(Php::Parameters &params) {
     _format = std::string(params[0]);
+    std::transform(_format.begin(), _format.end(),
+      _format.begin(), tolower);
     return true;
   }
 
@@ -306,8 +327,6 @@ extern "C" {
     photon_opencv.method<&Photon_OpenCV::writeimage>("writeimage", {
       Php::ByVal("output", Php::Type::String),
     });
-
-    photon_opencv.method<&Photon_OpenCV::converttosrgb>("converttosrgb");
 
     photon_opencv.method<&Photon_OpenCV::getlasterror>("getlasterror");
 
