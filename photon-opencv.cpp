@@ -180,7 +180,7 @@ public:
   Photon_OpenCV() {
     /* Static local intilization is thread safe */
     static std::once_flag initialized;
-    std::call_once(initialized, [](){_initialize();});
+    std::call_once(initialized, _initialize);
   }
 
   Php::Value readimageblob(Php::Parameters &params) {
