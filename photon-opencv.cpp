@@ -25,7 +25,6 @@ protected:
   int _compression_quality = 80;
   std::vector<uint8_t> _icc_profile;
 
-  static bool _initialized;
   static cmsHPROFILE _srgb_profile;
 
   /* Cached Gmagick constants */
@@ -76,17 +75,6 @@ protected:
     if (!embedded_profile) {
       _last_error = "Failed to decode embedded profile";
       return false;
-    }
-
-    if (!_srgb_profile) {
-      _srgb_profile = cmsOpenProfileFromMem(
-          srgb_icc, sizeof(srgb_icc)-1);
-      if (!_srgb_profile) {
-        cmsCloseProfile(embedded_profile);
-
-        _last_error = "Failed to decode builtin sRGB profile";
-        return false;
-      }
     }
 
     int storage_format;
@@ -171,12 +159,8 @@ protected:
     return result;
   }
 
-public:
-  Photon_OpenCV() {
-    if (_initialized) {
-      return;
-    }
-
+  static void _initialize() {
+    /* Load constants */
     _gmagick_channel_opacity = _getconstantex("Gmagick::CHANNEL_OPACITY");
 
     _gmagick_filter_lanczos = _getconstantex("Gmagick::FILTER_LANCZOS");
@@ -185,7 +169,18 @@ public:
     _gmagick_filter_point = _getconstantex("Gmagick::FILTER_POINT");
     _gmagick_filter_box = _getconstantex("Gmagick::FILTER_BOX");
 
-    _initialized = true;
+    /* Load default sRGB profile */
+    _srgb_profile = cmsOpenProfileFromMem(srgb_icc, sizeof(srgb_icc)-1);
+    if (!_srgb_profile) {
+      throw Php::Exception("Failed to decode builtin sRGB profile");
+    }
+  }
+
+public:
+  Photon_OpenCV() {
+    /* Static local intilization is thread safe */
+    static std::once_flag initialized;
+    std::call_once(initialized, [](){_initialize();});
   }
 
   Php::Value readimageblob(Php::Parameters &params) {
@@ -370,7 +365,6 @@ public:
   }
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = NULL;
-bool Photon_OpenCV::_initialized = false;
 
 int Photon_OpenCV::_gmagick_channel_opacity = -1;
 int Photon_OpenCV::_gmagick_filter_lanczos = -1;
