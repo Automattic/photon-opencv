@@ -326,6 +326,15 @@ public:
     return true;
   }
 
+  /* Documentation is lacking, but scale image is resizeimage with
+    filter=Gmagick::FILTER_BOX and blur=1.0 */
+  Php::Value scaleimage(Php::Parameters &params) {
+    /* Discard possible extra params */
+    params.resize(2);
+    params.push_back(Php::Value(_gmagick_filter_box));
+    return resizeimage(params);
+  }
+
   Php::Value cropimage(Php::Parameters &params) {
     check_image_loaded();
 
@@ -412,10 +421,9 @@ extern "C" {
       Php::ByVal("height", Php::Type::Numeric),
       Php::ByVal("filter", Php::Type::Numeric, false),
     });
-    photon_opencv.method<&Photon_OpenCV::resizeimage>("scaleimage", {
+    photon_opencv.method<&Photon_OpenCV::scaleimage>("scaleimage", {
       Php::ByVal("width", Php::Type::Numeric),
       Php::ByVal("height", Php::Type::Numeric),
-      Php::ByVal("filter", Php::Type::Numeric, false),
     });
 
     photon_opencv.method<&Photon_OpenCV::cropimage>("cropimage", {
