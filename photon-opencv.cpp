@@ -5,6 +5,8 @@
 #include <opencv2/opencv.hpp>
 #include <exiv2/exiv2.hpp>
 #include <lcms2.h>
+#include <zend.h>
+#include <zend_constants.h>
 #include "srgb.icc.h"
 
 #define check_image_loaded() { \
@@ -23,9 +25,16 @@ protected:
   int _compression_quality = 80;
   std::vector<uint8_t> _icc_profile;
 
+  static bool _initialized;
   static cmsHPROFILE _srgb_profile;
 
+  /* Cached Gmagick constants */
   static int _gmagick_channel_opacity;
+  static int _gmagick_filter_lanczos;
+  static int _gmagick_filter_cubic;
+  static int _gmagick_filter_triangle;
+  static int _gmagick_filter_point;
+  static int _gmagick_filter_box;
 
   void _enforce8u() {
     if (CV_8U != _img.depth()) {
@@ -129,10 +138,55 @@ protected:
     return true;
   }
 
+  static int _gmagickfilter2opencvinter(int filter, int default_filter) {
+    int opencv_filter = default_filter;
+
+    if (filter == _gmagick_filter_lanczos) {
+      opencv_filter = cv::INTER_LANCZOS4;
+    }
+    else if (filter == _gmagick_filter_point) {
+      opencv_filter = cv::INTER_NEAREST;
+    }
+    else if (filter == _gmagick_filter_box) {
+      opencv_filter = cv::INTER_AREA;
+    }
+    else if (filter == _gmagick_filter_triangle) {
+      opencv_filter = cv::INTER_LINEAR;
+    }
+    else if (filter == _gmagick_filter_cubic) {
+      opencv_filter = cv::INTER_CUBIC;
+    }
+
+    return opencv_filter;
+  }
+
+  /* Workaround for a bug in php-cpp.
+     See https://github.com/CopernicaMarketingSoftware/PHP-CPP/issues/423
+     If this is fixed and removed, it's safe to remove the zend includes */
+  static Php::Value _getconstantex(const char *name) {
+    zend_string *zstr = zend_string_init(name, ::strlen(name), 1);
+    auto result = zend_get_constant_ex(zstr, nullptr, ZEND_FETCH_CLASS_SILENT);
+    zend_string_release(zstr);
+
+    return result;
+  }
+
 public:
-  static void setconstants(Php::Parameters &params) {
-    _gmagick_channel_opacity = params[0];
-  };
+  Photon_OpenCV() {
+    if (_initialized) {
+      return;
+    }
+
+    _gmagick_channel_opacity = _getconstantex("Gmagick::CHANNEL_OPACITY");
+
+    _gmagick_filter_lanczos = _getconstantex("Gmagick::FILTER_LANCZOS");
+    _gmagick_filter_cubic = _getconstantex("Gmagick::FILTER_CUBIC");
+    _gmagick_filter_triangle = _getconstantex("Gmagick::FILTER_TRIANGLE");
+    _gmagick_filter_point = _getconstantex("Gmagick::FILTER_POINT");
+    _gmagick_filter_box = _getconstantex("Gmagick::FILTER_BOX");
+
+    _initialized = true;
+  }
 
   Php::Value readimageblob(Php::Parameters &params) {
     std::string raw_image_data = params[0];
@@ -245,7 +299,7 @@ public:
   Php::Value setimageformat(Php::Parameters &params) {
     _format = std::string(params[0]);
     std::transform(_format.begin(), _format.end(),
-      _format.begin(), tolower);
+      _format.begin(), ::tolower);
     return true;
   }
 
@@ -262,10 +316,17 @@ public:
   Php::Value resizeimage(Php::Parameters &params) {
     check_image_loaded();
 
+    /* Blur is ignored */
     int width = std::max(1, (int) params[0]);
     int height = std::max(1, (int) params[1]);
+    int filter = params.size() > 2? (int) params[2] : -1;
+    /* AREA looks excellent when downsampling and is super fast, but
+       is visually awful when upscaling  */
+    int default_filter = width > _img.cols || height > _img.rows?
+      cv::INTER_LANCZOS4 : cv::INTER_AREA;
 
-    cv::resize(_img, _img, cv::Size(width, height));
+    cv::resize(_img, _img, cv::Size(width, height), 0, 0,
+        _gmagickfilter2opencvinter(filter, default_filter));
 
     return true;
   }
@@ -309,17 +370,20 @@ public:
   }
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = NULL;
+bool Photon_OpenCV::_initialized = false;
+
 int Photon_OpenCV::_gmagick_channel_opacity = -1;
+int Photon_OpenCV::_gmagick_filter_lanczos = -1;
+int Photon_OpenCV::_gmagick_filter_cubic = -1;
+int Photon_OpenCV::_gmagick_filter_triangle = -1;
+int Photon_OpenCV::_gmagick_filter_point = -1;
+int Photon_OpenCV::_gmagick_filter_box = -1;
 
 extern "C" {
   PHPCPP_EXPORT void *get_module() {
     static Php::Extension extension("photon-opencv", "0.1");
 
     Php::Class<Photon_OpenCV> photon_opencv("Photon_OpenCV");
-
-    photon_opencv.method<&Photon_OpenCV::setconstants>("setconstants", {
-      Php::ByVal("gmagick_channel_opacity", Php::Type::Numeric),
-    });
 
     photon_opencv.method<&Photon_OpenCV::readimageblob>("readimageblob", {
       Php::ByVal("raw_image_data", Php::Type::String),
@@ -352,10 +416,12 @@ extern "C" {
     photon_opencv.method<&Photon_OpenCV::resizeimage>("resizeimage", {
       Php::ByVal("width", Php::Type::Numeric),
       Php::ByVal("height", Php::Type::Numeric),
+      Php::ByVal("filter", Php::Type::Numeric, false),
     });
     photon_opencv.method<&Photon_OpenCV::resizeimage>("scaleimage", {
       Php::ByVal("width", Php::Type::Numeric),
       Php::ByVal("height", Php::Type::Numeric),
+      Php::ByVal("filter", Php::Type::Numeric, false),
     });
 
     photon_opencv.method<&Photon_OpenCV::cropimage>("cropimage", {
