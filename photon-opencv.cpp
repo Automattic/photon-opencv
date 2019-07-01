@@ -74,13 +74,8 @@ protected:
         _icc_profile.data(), _icc_profile.size());
     if (!embedded_profile) {
       _last_error = "Failed to decode embedded profile";
+      _icc_profile.clear();
       return false;
-    }
-
-    /* Alpha optimizations using `reshape()` require continuous data.
-       If necessary, this can be optimized out for images without alpha */
-    if (!_img.isContinuous()) {
-      _img = _img.clone();
     }
 
     int storage_format;
@@ -111,7 +106,19 @@ protected:
       INTENT_PERCEPTUAL, 0
     );
 
+    if (!transform) {
+      _last_error = "Failed to create transform to sRGB";
+      _icc_profile.clear();
+      return false;
+    }
+
     cmsCloseProfile(embedded_profile);
+
+    /* Alpha optimizations using `reshape()` require continuous data.
+       If necessary, this can be optimized out for images without alpha */
+    if (!_img.isContinuous()) {
+      _img = _img.clone();
+    }
 
     int output_type = _imagehasalpha()? CV_8UC4 : CV_8UC3;
     cv::Mat transformed_img = cv::Mat(_img.rows, _img.cols, output_type);
