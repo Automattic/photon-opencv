@@ -357,10 +357,14 @@ public:
   /* Documentation is lacking, but scale image is resizeimage with
     filter=Gmagick::FILTER_BOX and blur=1.0 */
   Php::Value scaleimage(Php::Parameters &params) {
-    /* Discard possible extra params */
-    params.resize(2);
-    params.push_back(Php::Value(_gmagick_filter_box));
-    return resizeimage(params);
+    check_image_loaded();
+
+    int width = std::max(1, (int) params[0]);
+    int height = std::max(1, (int) params[1]);
+
+    cv::resize(_img, _img, cv::Size(width, height), 0, 0, cv::INTER_AREA);
+
+    return true;
   }
 
   Php::Value cropimage(Php::Parameters &params) {
