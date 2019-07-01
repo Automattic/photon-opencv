@@ -77,22 +77,25 @@ protected:
       return false;
     }
 
+    /* Alpha optimizations using `reshape()` require continuous data.
+       If necessary, this can be optimized out for images without alpha */
+    if (!_img.isContinuous()) {
+      _img = _img.clone();
+    }
+
     int storage_format;
+    int alpha_channel;
     switch (_img.channels()) {
       case 1:
-        storage_format = TYPE_GRAY_8;
-        break;
-
       case 2:
-        storage_format = TYPE_GRAYA_8;
+        storage_format = TYPE_GRAY_8;
+        alpha_channel = 1;
         break;
 
       case 3:
-        storage_format = TYPE_BGR_8;
-        break;
-
       case 4:
-        storage_format = TYPE_BGRA_8;
+        storage_format = TYPE_BGR_8;
+        alpha_channel = 3;
         break;
 
       default:
@@ -110,19 +113,39 @@ protected:
 
     cmsCloseProfile(embedded_profile);
 
-    cv::Mat transformed_img = cv::Mat(_img.rows, _img.cols, CV_8UC3);
+    int output_type = _imagehasalpha()? CV_8UC4 : CV_8UC3;
+    cv::Mat transformed_img = cv::Mat(_img.rows, _img.cols, output_type);
+
+    /* The sRGB profile can't handle the alpha channel. We make sure it's
+       skipped when applying the profile */
+    cv::Mat no_alpha_img = _img.reshape(1, _img.rows*_img.cols).
+      colRange(0, alpha_channel);
+    cv::Mat no_alpha_transformed_img = transformed_img.
+      reshape(1, transformed_img.rows*transformed_img.cols).
+      colRange(0, 3);
+
     cmsDoTransformLineStride(
         transform,
-        _img.data, transformed_img.data,
-        _img.cols, _img.rows,
-        _img.step, transformed_img.step,
+        no_alpha_img.data, no_alpha_transformed_img.data,
+        no_alpha_img.cols/3, no_alpha_img.rows,
+        no_alpha_img.step, no_alpha_transformed_img.step,
         0, 0
     );
-    _img = transformed_img;
-
     cmsDeleteTransform(transform);
 
+    if (_imagehasalpha()) {
+      /* Copy the original alpha information */
+      cv::Mat alpha_only_img = _img.reshape(1, _img.rows*_img.cols).
+        colRange(alpha_channel, alpha_channel+1);
+      cv::Mat alpha_only_transformed_img = transformed_img.
+        reshape(1, transformed_img.rows*transformed_img.cols).
+        colRange(3, 4);
+      alpha_only_img.copyTo(alpha_only_transformed_img);
+    }
+
+    _img = transformed_img;
     _icc_profile.clear();
+
     return true;
   }
 
@@ -174,6 +197,11 @@ protected:
     if (!_srgb_profile) {
       throw Php::Exception("Failed to decode builtin sRGB profile");
     }
+  }
+
+  bool _imagehasalpha() {
+    /* Even number of channels means it's either GA or BGRA */
+    return !(_img.channels() & 1);
   }
 
 public:
@@ -370,7 +398,7 @@ public:
     }
 
     /* Opacity channel is present with an even number number of channels */
-    return (_img.channels() & 1? 0 : 8);
+    return _imagehasalpha()? 8 : 0;
   }
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = NULL;
