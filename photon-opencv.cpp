@@ -326,8 +326,17 @@ public:
         _format = "png";
         break;
 
-      default:
+	  case Exiv2::ImageType::jpeg:
         _format = "jpeg";
+		break;
+
+      default:
+		/* Default to jpeg, but disable lazy loading */
+        _format = "jpeg";
+		if (!_maybedecodeimage()) {
+			return false;
+		}
+		break;
     }
 
     _header_width = exiv_img->pixelWidth();
