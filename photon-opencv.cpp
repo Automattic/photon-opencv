@@ -35,6 +35,11 @@ protected:
   static int _gmagick_filter_point;
   static int _gmagick_filter_box;
 
+  static int _gmagick_imgtype_grayscale;
+  static int _gmagick_imgtype_grayscalematte;
+  static int _gmagick_imgtype_truecolor;
+  static int _gmagick_imgtype_truecolormatte;
+
   void _enforce8u() {
     if (CV_8U != _img.depth()) {
       /* Proper convertion is mostly guess work, but it's fairly rare and
@@ -205,6 +210,15 @@ protected:
     _gmagick_filter_point = _getconstantex("Gmagick::FILTER_POINT");
     _gmagick_filter_box = _getconstantex("Gmagick::FILTER_BOX");
 
+    _gmagick_imgtype_grayscale = _getconstantex(
+        "Gmagick::IMGTYPE_GRAYSCALE");
+    _gmagick_imgtype_grayscalematte = _getconstantex(
+        "Gmagick::IMGTYPE_GRAYSCALEMATTE");
+    _gmagick_imgtype_truecolor = _getconstantex(
+        "Gmagick::IMGTYPE_TRUECOLOR");
+    _gmagick_imgtype_truecolormatte = _getconstantex(
+        "Gmagick::IMGTYPE_TRUECOLORMATTE");
+
     /* Load default sRGB profile */
     _srgb_profile = cmsOpenProfileFromMem(srgb_icc, sizeof(srgb_icc)-1);
     if (!_srgb_profile) {
@@ -298,6 +312,7 @@ public:
       _last_error = error.what();
       return false;
     }
+
     switch (exiv_img->imageType()) {
       case Exiv2::ImageType::png:
         _format = "png";
@@ -313,8 +328,28 @@ public:
       std::memcpy(_icc_profile.data(), profile->pData_, profile->size_);
     }
 
-    // TODO: also implement this
-    _type = 0;
+    /* Palettes are automatically converted to RGB on decode */
+    switch (_img.channels()) {
+      case 1:
+        _type = _gmagick_imgtype_grayscale;
+        break;
+
+      case 2:
+        _type = _gmagick_imgtype_grayscalematte;
+        break;
+
+      case 3:
+        _type = _gmagick_imgtype_truecolor;
+        break;
+
+      case 4:
+        _type = _gmagick_imgtype_truecolormatte;
+        break;
+
+      default:
+        _last_error = "Invalid number of channels";
+        return false;
+    }
 
     return true;
   }
@@ -393,6 +428,11 @@ public:
     return _type;
   }
 
+  Php::Value setimagetype() {
+    _last_error = "setimagetype() is not implemented";
+    return false;
+  }
+
   Php::Value resizeimage(Php::Parameters &params) {
     check_image_loaded();
 
@@ -469,6 +509,11 @@ int Photon_OpenCV::_gmagick_filter_triangle = -1;
 int Photon_OpenCV::_gmagick_filter_point = -1;
 int Photon_OpenCV::_gmagick_filter_box = -1;
 
+int Photon_OpenCV::_gmagick_imgtype_grayscale = -1;
+int Photon_OpenCV::_gmagick_imgtype_grayscalematte = -1;
+int Photon_OpenCV::_gmagick_imgtype_truecolor = -1;
+int Photon_OpenCV::_gmagick_imgtype_truecolormatte = -1;
+
 extern "C" {
   PHPCPP_EXPORT void *get_module() {
     static Php::Extension extension("photon-opencv", "0.1");
@@ -502,6 +547,7 @@ extern "C" {
     });
 
     photon_opencv.method<&Photon_OpenCV::getimagetype>("getimagetype");
+    photon_opencv.method<&Photon_OpenCV::setimagetype>("setimagetype");
 
     photon_opencv.method<&Photon_OpenCV::resizeimage>("resizeimage", {
       Php::ByVal("width", Php::Type::Numeric),
