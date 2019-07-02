@@ -9,8 +9,8 @@
 #include <zend_constants.h>
 #include "srgb.icc.h"
 
-#define check_image_loaded() { \
-  if (_img.empty()) { \
+#define _checkimageloaded() { \
+  if (_raw_image_data.empty()) { \
     _last_error = "No image loaded"; \
     return false; \
   } \
@@ -24,6 +24,9 @@ protected:
   int _type;
   int _compression_quality = 80;
   std::vector<uint8_t> _icc_profile;
+  std::string _raw_image_data;
+  int _header_width;
+  int _header_height;
 
   static cmsHPROFILE _srgb_profile;
 
@@ -275,6 +278,27 @@ protected:
     }
   }
 
+  bool _maybedecodeimage() {
+    _checkimageloaded();
+
+    if (!_img.empty()) {
+      return true;
+    }
+
+    cv::Mat raw_data(1, _raw_image_data.size(), CV_8UC1,
+      (void *) _raw_image_data.data());
+    _img = cv::imdecode(raw_data, cv::IMREAD_UNCHANGED);
+
+    if (_img.empty()) {
+      _last_error = "Failed to decode image";
+      return false;
+    }
+
+    _enforce8u();
+
+    return true;
+  }
+
 public:
   Photon_OpenCV() {
     /* Static local intilization is thread safe */
@@ -283,33 +307,17 @@ public:
   }
 
   Php::Value readimageblob(Php::Parameters &params) {
-    std::string raw_image_data = params[0];
-
-    if (raw_image_data.empty()) {
-      _last_error = "Input buffer is empty";
-      return false;
-    }
-
-    cv::Mat raw_data(1, raw_image_data.size(), CV_8UC1,
-      (void *) raw_image_data.data());
-    _img = cv::imdecode(raw_data, cv::IMREAD_UNCHANGED);
-
-    if (_img.empty()) {
-      _last_error = "Failed to decode image";
-      return false;
-    }
-
-    /* Use any number of channels, but enforce 8 bits per channel */
-    _enforce8u();
+    _raw_image_data = std::string(params[0]);
 
     Exiv2::Image::AutoPtr exiv_img;
     try {
       exiv_img = Exiv2::ImageFactory::open(
-        (Exiv2::byte *) raw_image_data.data(), raw_image_data.size());
+        (Exiv2::byte *) _raw_image_data.data(), _raw_image_data.size());
       exiv_img->readMetadata();
     }
     catch (Exiv2::Error &error) {
       _last_error = error.what();
+      _raw_image_data.clear();
       return false;
     }
 
@@ -321,6 +329,9 @@ public:
       default:
         _format = "jpeg";
     }
+
+    _header_width = exiv_img->pixelWidth();
+    _header_height = exiv_img->pixelHeight();
 
     if (exiv_img->iccProfileDefined()) {
       const Exiv2::DataBuf *profile = exiv_img->iccProfile();
@@ -347,6 +358,7 @@ public:
         break;
 
       default:
+        _raw_image_data.clear();
         _last_error = "Invalid number of channels";
         return false;
     }
@@ -355,12 +367,20 @@ public:
   }
 
   Php::Value writeimage(Php::Parameters &params) {
-    check_image_loaded();
+    _checkimageloaded();
+
+    std::string wanted_output = params[0];
+
+    /* No ops were performed */
+    if (_img.empty()) {
+      std::ofstream output(wanted_output,
+          std::ios::out | std::ios::binary);
+      output << _raw_image_data;
+      return true;
+    }
 
     /* OpenCV strips the profile, we need to apply it first */
     _converttosrgb();
-
-    std::string wanted_output = params[0];
 
     std::vector<int> img_parameters;
     if ("jpeg" == _format) {
@@ -398,23 +418,36 @@ public:
   }
 
   Php::Value getimagewidth() {
-    check_image_loaded();
-    return _img.cols;
+    _checkimageloaded();
+
+    return (_img.empty()? _header_width : _img.cols);
   }
 
   Php::Value getimageheight() {
-    check_image_loaded();
-    return _img.rows;
+    _checkimageloaded();
+    return (_img.empty()? _header_height : _img.rows);
   }
 
   Php::Value getimageformat() {
-    check_image_loaded();
+    _checkimageloaded();
     return _format;
   }
+
   Php::Value setimageformat(Php::Parameters &params) {
-    _format = std::string(params[0]);
-    std::transform(_format.begin(), _format.end(),
-      _format.begin(), ::tolower);
+    std::string new_format = std::string(params[0]);
+    std::transform(new_format.begin(), new_format.end(),
+      new_format.begin(), ::tolower);
+
+    if (new_format == _format) {
+      return true;
+    }
+
+    if (!_maybedecodeimage()) {
+      return false;
+    }
+
+    _format = new_format;
+
     return true;
   }
 
@@ -424,7 +457,7 @@ public:
   }
 
   Php::Value getimagetype() {
-    check_image_loaded();
+    _checkimageloaded();
     return _type;
   }
 
@@ -434,7 +467,7 @@ public:
   }
 
   Php::Value resizeimage(Php::Parameters &params) {
-    check_image_loaded();
+    _checkimageloaded();
 
     /* Blur is ignored */
     int width = std::max(1, (int) params[0]);
@@ -442,6 +475,17 @@ public:
     int filter = params.size() > 2? (int) params[2] : -1;
     /* AREA is fast, looks excellent when downsampling, good when upscaling */
     const int default_filter = cv::INTER_AREA;
+
+    /* Explicitly skip if it's a noop. */
+    int img_width = _img.empty()? _header_width : _img.cols;
+    int img_height = _img.empty()? _header_height : _img.rows ;
+    if (width == img_width && height == img_height) {
+      return true;
+    }
+
+    if (!_maybedecodeimage()) {
+      return false;
+    }
 
     _transparencysaferesize(width, height,
         _gmagickfilter2opencvinter(filter, default_filter));
@@ -452,10 +496,21 @@ public:
   /* Documentation is lacking, but scaleimage is resizeimage with
     filter=Gmagick::FILTER_BOX and blur=1.0 */
   Php::Value scaleimage(Php::Parameters &params) {
-    check_image_loaded();
+    _checkimageloaded();
 
     int width = std::max(1, (int) params[0]);
     int height = std::max(1, (int) params[1]);
+
+    /* Explicitly skip if it's a noop. */
+    int img_width = _img.empty()? _header_width : _img.cols;
+    int img_height = _img.empty()? _header_height : _img.rows ;
+    if (width == img_width && height == img_height) {
+      return true;
+    }
+
+    if (!_maybedecodeimage()) {
+      return false;
+    }
 
     _transparencysaferesize(width, height, cv::INTER_AREA);
 
@@ -463,7 +518,7 @@ public:
   }
 
   Php::Value cropimage(Php::Parameters &params) {
-    check_image_loaded();
+    _checkimageloaded();
 
     int x = params[2];
     int y = params[3];
@@ -475,10 +530,22 @@ public:
     if (y > y2) {
       std::swap(y, y2);
     }
-    x = std::max(0, std::min(x, _img.cols-1));
-    y = std::max(0, std::min(y, _img.rows-1));
-    x2 = std::max(0, std::min(x2, _img.cols-1));
-    y2 = std::max(0, std::min(y2, _img.rows-1));
+
+    int width = _img.empty()? _header_width : _img.cols;
+    int height = _img.empty()? _header_height : _img.rows ;
+    x = std::max(0, std::min(x, width-1));
+    y = std::max(0, std::min(y, height-1));
+    x2 = std::max(0, std::min(x2, width-1));
+    y2 = std::max(0, std::min(y2, height-1));
+
+    /* Prevent image from being loaded if it's a noop */
+    if(!x && !y && x2 == _header_width-1 && y2 == _header_height-1) {
+      return true;
+    }
+
+    if (!_maybedecodeimage()) {
+      return false;
+    }
 
     _img = _img(cv::Rect(x, y, x2-x+1, y2-y+1));
 
@@ -486,13 +553,14 @@ public:
   }
 
   Php::Value getimagechanneldepth(Php::Parameters &params) {
-    check_image_loaded();
+    _checkimageloaded();
 
     int channel = params[0];
 
-    /* Gmagick's channels don't map directly to OpenCV's, but Photon is only
+    /* If the image has not been decoded, pretend all channels exist.
+       Gmagick's channels don't map directly to OpenCV's, but Photon is only
        interested in the opacity */
-    if (channel != _gmagick_channel_opacity) {
+    if (_img.empty() || channel != _gmagick_channel_opacity) {
       return 8;
     }
 
@@ -521,7 +589,7 @@ extern "C" {
     Php::Class<Photon_OpenCV> photon_opencv("Photon_OpenCV");
 
     photon_opencv.method<&Photon_OpenCV::readimageblob>("readimageblob", {
-      Php::ByVal("raw_image_data", Php::Type::String),
+      Php::ByRef("raw_image_data", Php::Type::String),
     });
     photon_opencv.method<&Photon_OpenCV::writeimage>("writeimage", {
       Php::ByVal("output", Php::Type::String),
