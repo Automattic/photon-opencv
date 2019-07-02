@@ -157,6 +157,12 @@ protected:
   }
 
   static int _gmagickfilter2opencvinter(int filter, int default_filter) {
+    /* Disable custom filters for now. Photon uses lanczos to circunvent an
+       issue that does not exist here. See:
+       https://code.trac.wordpress.org/ticket/62
+       https://sourceforge.net/p/graphicsmagick/bugs/381/ */
+    return cv::INTER_AREA;
+
     int opencv_filter = default_filter;
 
     if (filter == _gmagick_filter_lanczos) {
@@ -209,6 +215,50 @@ protected:
   bool _imagehasalpha() {
     /* Even number of channels means it's either GA or BGRA */
     return !(_img.channels() & 1);
+  }
+
+  /* Assumes alpha is the last channel */
+  void _associatealpha() {
+    /* Continuity required for `reshape()` */
+    if (!_img.isContinuous()) {
+      _img = _img.clone();
+    }
+
+    int alpha_channel = _img.channels()-1;
+    cv::Mat alpha = _img.reshape(1, _img.rows*_img.cols).
+      colRange(alpha_channel, alpha_channel+1);
+
+    for (int i = 0; i < alpha_channel; i++) {
+      cv::Mat color = _img.reshape(1, _img.rows*_img.cols).colRange(i, i+1);
+      cv::multiply(color, alpha, color, 1./255);
+    }
+  }
+
+  /* Assumes alpha is the last channel */
+  void _dissociatealpha() {
+    /* Continuity required for `reshape()` */
+    if (!_img.isContinuous()) {
+      _img = _img.clone();
+    }
+
+    int alpha_channel = _img.channels()-1;
+    cv::Mat alpha = _img.reshape(1, _img.rows*_img.cols).
+      colRange(alpha_channel, alpha_channel+1);
+
+    for (int i = 0; i < alpha_channel; i++) {
+      cv::Mat color = _img.reshape(1, _img.rows*_img.cols).colRange(i, i+1);
+      cv::divide(color, alpha, color, 255.);
+    }
+  }
+
+  void _transparencysaferesize(int width, int height, int filter) {
+    if (_imagehasalpha()) {
+      _associatealpha();
+    }
+    cv::resize(_img, _img, cv::Size(width, height), 0, 0, filter);
+    if (_imagehasalpha()) {
+      _dissociatealpha();
+    }
   }
 
 public:
@@ -350,18 +400,16 @@ public:
     int width = std::max(1, (int) params[0]);
     int height = std::max(1, (int) params[1]);
     int filter = params.size() > 2? (int) params[2] : -1;
-    /* AREA looks excellent when downsampling and is super fast, but
-       is visually awful when upscaling  */
-    int default_filter = width > _img.cols || height > _img.rows?
-      cv::INTER_LANCZOS4 : cv::INTER_AREA;
+    /* AREA is fast, looks excellent when downsampling, good when upscaling */
+    const int default_filter = cv::INTER_AREA;
 
-    cv::resize(_img, _img, cv::Size(width, height), 0, 0,
+    _transparencysaferesize(width, height,
         _gmagickfilter2opencvinter(filter, default_filter));
 
     return true;
   }
 
-  /* Documentation is lacking, but scale image is resizeimage with
+  /* Documentation is lacking, but scaleimage is resizeimage with
     filter=Gmagick::FILTER_BOX and blur=1.0 */
   Php::Value scaleimage(Php::Parameters &params) {
     check_image_loaded();
@@ -369,7 +417,7 @@ public:
     int width = std::max(1, (int) params[0]);
     int height = std::max(1, (int) params[1]);
 
-    cv::resize(_img, _img, cv::Size(width, height), 0, 0, cv::INTER_AREA);
+    _transparencysaferesize(width, height, cv::INTER_AREA);
 
     return true;
   }
