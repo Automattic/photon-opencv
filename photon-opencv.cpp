@@ -95,7 +95,6 @@ protected:
 
       default:
         cmsCloseProfile(embedded_profile);
-
         _last_error = "Invalid number of channels";
         return false;
     }
@@ -107,8 +106,9 @@ protected:
     );
 
     if (!transform) {
-      _last_error = "Failed to create transform to sRGB";
+      cmsCloseProfile(embedded_profile);
       _icc_profile.clear();
+      _last_error = "Failed to create transform to sRGB";
       return false;
     }
 
