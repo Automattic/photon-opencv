@@ -2,6 +2,7 @@
 #include <string>
 #include <cstdio>
 #include <iostream>
+#include <fstream>
 #include <opencv2/opencv.hpp>
 #include <exiv2/exiv2.hpp>
 #include <lcms2.h>
@@ -307,7 +308,7 @@ public:
   }
 
   Php::Value readimageblob(Php::Parameters &params) {
-    _raw_image_data = std::string(params[0]);
+    _raw_image_data = params[0].stringValue();
 
     Exiv2::Image::AutoPtr exiv_img;
     try {
@@ -378,7 +379,7 @@ public:
   Php::Value writeimage(Php::Parameters &params) {
     _checkimageloaded();
 
-    std::string wanted_output = params[0];
+    std::string wanted_output = params[0].stringValue();
 
     /* No ops were performed */
     if (_img.empty()) {
@@ -443,7 +444,7 @@ public:
   }
 
   Php::Value setimageformat(Php::Parameters &params) {
-    std::string new_format = std::string(params[0]);
+    std::string new_format = params[0].stringValue();
     std::transform(new_format.begin(), new_format.end(),
       new_format.begin(), ::tolower);
 
