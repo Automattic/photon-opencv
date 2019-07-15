@@ -543,13 +543,13 @@ public:
 
     int width = _img.empty()? _header_width : _img.cols;
     int height = _img.empty()? _header_height : _img.rows ;
-    x = std::max(0, std::min(x, width-1));
-    y = std::max(0, std::min(y, height-1));
-    x2 = std::max(0, std::min(x2, width-1));
-    y2 = std::max(0, std::min(y2, height-1));
+    x = std::max(0, std::min(x, width));
+    y = std::max(0, std::min(y, height));
+    x2 = std::max(0, std::min(x2, width));
+    y2 = std::max(0, std::min(y2, height));
 
     /* Prevent image from being loaded if it's a noop */
-    if(!x && !y && x2 == _header_width-1 && y2 == _header_height-1) {
+    if (!x && !y && x2 == _header_width && y2 == _header_height) {
       return true;
     }
 
@@ -557,7 +557,7 @@ public:
       return false;
     }
 
-    _img = _img(cv::Rect(x, y, x2-x+1, y2-y+1));
+    _img = _img(cv::Rect(x, y, x2-x, y2-y));
 
     return true;
   }
