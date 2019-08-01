@@ -28,6 +28,7 @@ protected:
   std::string _raw_image_data;
   int _header_width;
   int _header_height;
+  Exiv2::Value::AutoPtr _original_orientation;
 
   static cmsHPROFILE _srgb_profile;
 
@@ -334,6 +335,15 @@ protected:
         break;
     }
 
+    auto &exif = exiv_img->exifData();
+    Exiv2::ExifKey orientation_key("Exif.Image.Orientation");
+    auto orientation_pos = exif.findKey(orientation_key);
+
+    _original_orientation.release();
+    if (orientation_pos != exif.end()) {
+      _original_orientation = orientation_pos->getValue();
+    }
+
     _header_width = exiv_img->pixelWidth();
     _header_height = exiv_img->pixelHeight();
 
@@ -435,6 +445,30 @@ public:
     if (std::rename(actual_output.c_str(), wanted_output.c_str())) {
       _last_error = "Failed to rename generated image";
       return false;
+    }
+
+    /* Manually reinsert orientation exif data */
+    if (_original_orientation.get()) {
+      Exiv2::Image::AutoPtr exiv_img;
+      try {
+        exiv_img = Exiv2::ImageFactory::open(wanted_output, false);
+        exiv_img->readMetadata();
+      }
+      catch (Exiv2::Error &error) {
+        _last_error = error.what();
+        return false;
+      }
+
+      auto &exif = exiv_img->exifData();
+      Exiv2::ExifKey orientation_key("Exif.Image.Orientation");
+      exif.add(orientation_key, _original_orientation.get());
+      try {
+        exiv_img->writeMetadata();
+      }
+      catch (Exiv2::Error &error) {
+        _last_error = error.what();
+        return false;
+      }
     }
 
     return true;
