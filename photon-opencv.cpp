@@ -300,15 +300,9 @@ protected:
     return true;
   }
 
-public:
-  Photon_OpenCV() {
-    /* Static local intilization is thread safe */
-    static std::once_flag initialized;
-    std::call_once(initialized, _initialize);
-  }
-
-  Php::Value readimageblob(Php::Parameters &params) {
-    _raw_image_data = params[0].stringValue();
+  bool _loadimagefromrawdata() {
+    /* Clear image in case object is being reused */
+    _img = cv::Mat();
 
     Exiv2::Image::AutoPtr exiv_img;
     try {
@@ -327,17 +321,17 @@ public:
         _format = "png";
         break;
 
-	  case Exiv2::ImageType::jpeg:
+      case Exiv2::ImageType::jpeg:
         _format = "jpeg";
-		break;
+        break;
 
       default:
-		/* Default to jpeg, but disable lazy loading */
+        /* Default to jpeg, but disable lazy loading */
         _format = "jpeg";
-		if (!_maybedecodeimage()) {
-			return false;
-		}
-		break;
+        if (!_maybedecodeimage()) {
+            return false;
+        }
+        break;
     }
 
     _header_width = exiv_img->pixelWidth();
@@ -374,6 +368,30 @@ public:
     }
 
     return true;
+  }
+
+public:
+  Photon_OpenCV() {
+    /* Static local intilization is thread safe */
+    static std::once_flag initialized;
+    std::call_once(initialized, _initialize);
+  }
+
+  Php::Value readimageblob(Php::Parameters &params) {
+    _raw_image_data = params[0].stringValue();
+    return _loadimagefromrawdata();
+  }
+
+  Php::Value readimage(Php::Parameters &params) {
+    std::fstream input(params[0].stringValue(),
+        std::ios::in | std::ios::binary);
+
+    input.seekg(0, std::ios::end);
+    _raw_image_data.resize(input.tellg());
+    input.seekg(0, std::ios::beg);
+    input.read(_raw_image_data.data(), _raw_image_data.size());
+
+    return _loadimagefromrawdata();
   }
 
   Php::Value writeimage(Php::Parameters &params) {
@@ -562,6 +580,43 @@ public:
     return true;
   }
 
+  Php::Value rotateimage(Php::Parameters &params) {
+    _checkimageloaded();
+
+    int degrees = params[1];
+    int rotation_constant = -1;
+    switch (degrees) {
+      case 0:
+        return true;
+
+      case 90:
+        rotation_constant = cv::ROTATE_90_CLOCKWISE;
+        break;
+
+      case 180:
+        rotation_constant = cv::ROTATE_180;
+        break;
+
+      case 270:
+        rotation_constant = cv::ROTATE_90_COUNTERCLOCKWISE;
+        break;
+
+      default:
+        _last_error = "Unsuported rotation angle";
+        return false;
+    }
+
+    if (!_maybedecodeimage()) {
+      return false;
+    }
+
+    printf("%dx%d\n", _img.rows, _img.cols);
+    cv::rotate(_img, _img, rotation_constant);
+    printf("%dx%d\n", _img.rows, _img.cols);
+
+    return true;
+  }
+
   Php::Value getimagechanneldepth(Php::Parameters &params) {
     _checkimageloaded();
 
@@ -601,6 +656,9 @@ extern "C" {
     photon_opencv.method<&Photon_OpenCV::readimageblob>("readimageblob", {
       Php::ByRef("raw_image_data", Php::Type::String),
     });
+    photon_opencv.method<&Photon_OpenCV::readimage>("readimage", {
+      Php::ByVal("filepath", Php::Type::String),
+    });
     photon_opencv.method<&Photon_OpenCV::writeimage>("writeimage", {
       Php::ByVal("output", Php::Type::String),
     });
@@ -635,6 +693,11 @@ extern "C" {
     photon_opencv.method<&Photon_OpenCV::scaleimage>("scaleimage", {
       Php::ByVal("width", Php::Type::Numeric),
       Php::ByVal("height", Php::Type::Numeric),
+    });
+
+    photon_opencv.method<&Photon_OpenCV::rotateimage>("rotateimage", {
+      Php::ByVal("background", Php::Type::String),
+      Php::ByVal("degrees", Php::Type::Numeric),
     });
 
     photon_opencv.method<&Photon_OpenCV::cropimage>("cropimage", {
