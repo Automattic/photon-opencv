@@ -396,10 +396,15 @@ public:
     std::fstream input(params[0].stringValue(),
         std::ios::in | std::ios::binary);
 
-    input.seekg(0, std::ios::end);
-    _raw_image_data.resize(input.tellg());
-    input.seekg(0, std::ios::beg);
-    input.read(_raw_image_data.data(), _raw_image_data.size());
+    if (input.is_open()) {
+      input.seekg(0, std::ios::end);
+      _raw_image_data.resize(input.tellg());
+      input.seekg(0, std::ios::beg);
+      input.read(_raw_image_data.data(), _raw_image_data.size());
+    }
+    else {
+      _raw_image_data.resize(0);
+    }
 
     return _loadimagefromrawdata();
   }
