@@ -688,7 +688,7 @@ int Photon_OpenCV::_gmagick_imgtype_truecolormatte = -1;
 
 extern "C" {
   PHPCPP_EXPORT void *get_module() {
-    static Php::Extension extension("photon-opencv", "0.2");
+    static Php::Extension extension("photon-opencv", "0.2.1");
 
     Php::Class<Photon_OpenCV> photon_opencv("Photon_OpenCV");
 
