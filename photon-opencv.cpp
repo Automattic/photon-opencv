@@ -400,7 +400,7 @@ public:
       input.seekg(0, std::ios::end);
       _raw_image_data.resize(input.tellg());
       input.seekg(0, std::ios::beg);
-      input.read(_raw_image_data.data(), _raw_image_data.size());
+      input.read((char *) _raw_image_data.data(), _raw_image_data.size());
     }
     else {
       _raw_image_data.resize(0);
