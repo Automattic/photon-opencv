@@ -89,18 +89,18 @@ protected:
     }
 
     int storage_format;
-    int alpha_channel;
+    int num_intensity_channels;
     switch (_img.channels()) {
       case 1:
       case 2:
         storage_format = TYPE_GRAY_8;
-        alpha_channel = 1;
+        num_intensity_channels = 1;
         break;
 
       case 3:
       case 4:
         storage_format = TYPE_BGR_8;
-        alpha_channel = 3;
+        num_intensity_channels = 3;
         break;
 
       default:
@@ -135,8 +135,9 @@ protected:
 
     /* The sRGB profile can't handle the alpha channel. We make sure it's
        skipped when applying the profile */
-    cv::Mat no_alpha_img = _img.reshape(1, _img.rows*_img.cols).
-      colRange(0, alpha_channel);
+    cv::Mat no_alpha_img = _img.
+      reshape(1, _img.rows*_img.cols).
+      colRange(0, num_intensity_channels);
     cv::Mat no_alpha_transformed_img = transformed_img.
       reshape(1, transformed_img.rows*transformed_img.cols).
       colRange(0, 3);
@@ -144,7 +145,7 @@ protected:
     cmsDoTransformLineStride(
         transform,
         no_alpha_img.data, no_alpha_transformed_img.data,
-        no_alpha_img.cols/3, no_alpha_img.rows,
+        no_alpha_img.cols/num_intensity_channels, no_alpha_img.rows,
         no_alpha_img.step, no_alpha_transformed_img.step,
         0, 0
     );
@@ -153,7 +154,7 @@ protected:
     if (_imagehasalpha()) {
       /* Copy the original alpha information */
       cv::Mat alpha_only_img = _img.reshape(1, _img.rows*_img.cols).
-        colRange(alpha_channel, alpha_channel+1);
+        colRange(num_intensity_channels, num_intensity_channels+1);
       cv::Mat alpha_only_transformed_img = transformed_img.
         reshape(1, transformed_img.rows*transformed_img.cols).
         colRange(3, 4);
