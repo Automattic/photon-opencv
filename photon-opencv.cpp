@@ -310,12 +310,22 @@ protected:
     try {
       exiv_img = Exiv2::ImageFactory::open(
         (Exiv2::byte *) _raw_image_data.data(), _raw_image_data.size());
-      exiv_img->readMetadata();
     }
     catch (Exiv2::Error &error) {
       _last_error = error.what();
       _raw_image_data.clear();
       return false;
+    }
+
+    try {
+      exiv_img->readMetadata();
+    }
+    catch(Exiv2::Error &error) {
+      // Failing to read the metadata is not critical, but it requires us to
+      // try to decode the image to get the proper information early
+      if (!_maybedecodeimage()) {
+          return false;
+      }
     }
 
     switch (exiv_img->imageType()) {
