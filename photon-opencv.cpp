@@ -660,9 +660,7 @@ public:
       return false;
     }
 
-    printf("%dx%d\n", _img.rows, _img.cols);
     cv::rotate(_img, _img, rotation_constant);
-    printf("%dx%d\n", _img.rows, _img.cols);
 
     return true;
   }
