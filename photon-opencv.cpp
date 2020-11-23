@@ -391,6 +391,79 @@ protected:
     return true;
   }
 
+  bool _decodehexcolor(std::string color, cv::Vec3b &decoded) {
+      if ((color.size() != 4 && color.size() != 7) || color[0] != '#') {
+        return false;
+      }
+
+      std::vector<int> values(color.size() - 1);
+      for (size_t i = 1; i < color.size(); i++) {
+        char c = std::tolower(color[i]);
+        int v;
+        if (c >= '0' && c <= '9') {
+            v = c - '0';
+        }
+        else if (c >= 'a' && c <= 'f') {
+            v = c - 'a' + 10;
+        }
+        else {
+            return false;
+        }
+
+        values[i-1] = v;
+      }
+
+      // BGR
+      if (values.size() == 3) {
+        decoded[2] = (values[0]) << 4 | values[0];
+        decoded[1] = (values[1]) << 4 | values[1];
+        decoded[0] = (values[2]) << 4 | values[2];
+      }
+      else if (values.size() == 6) {
+        decoded[2] = (values[0]) << 4 | values[1];
+        decoded[1] = (values[2]) << 4 | values[3];
+        decoded[0] = (values[4]) << 4 | values[5];
+      }
+
+      return true;
+  }
+
+  cv::Vec4b _bgrtoloadedimagetype(cv::Vec3b bgr_color) {
+    cv::Vec4b color;
+
+    // Assumes 1 byte per channel
+    if (_img.channels() <= 2) {
+      color[0] = round(
+          bgr_color[0]*.114 + bgr_color[1]*.587 + bgr_color[2]*.299);
+      color[1] = 255;
+    }
+    else {
+      color[0] = bgr_color[0];
+      color[1] = bgr_color[1];
+      color[2] = bgr_color[2];
+      color[3] = 255;
+    }
+
+    return color;
+  }
+
+  void _forceaspectratio(int &width, int &height) {
+    int img_width = _img.empty()? _header_width : _img.cols;
+    int img_height = _img.empty()? _header_height : _img.rows ;
+
+    double img_ratio = (double) img_width / (double) img_height;
+    double new_ratio = (double) width / (double) height;
+
+    if ( new_ratio > img_ratio ) {
+      // Wider
+      width = std::max(1, (int) round(height * img_ratio));
+    }
+    else {
+      // Taller
+      height = std::max(1, (int) round(width / img_ratio));
+    }
+  }
+
 public:
   Photon_OpenCV() {
     /* Static local intilization is thread safe */
@@ -551,8 +624,13 @@ public:
     int width = std::max(1, (int) params[0]);
     int height = std::max(1, (int) params[1]);
     int filter = params.size() > 2? (int) params[2] : -1;
+    bool fit = params.size() > 3? (int) params[3] : false;
     /* AREA is fast, looks excellent when downsampling, good when upscaling */
     const int default_filter = cv::INTER_AREA;
+
+    if (fit) {
+      _forceaspectratio(width, height);
+    }
 
     /* Explicitly skip if it's a noop. */
     int img_width = _img.empty()? _header_width : _img.cols;
@@ -578,6 +656,11 @@ public:
 
     int width = std::max(1, (int) params[0]);
     int height = std::max(1, (int) params[1]);
+    bool fit = params.size() > 2? (int) params[2] : false;
+
+    if (fit) {
+      _forceaspectratio(width, height);
+    }
 
     /* Explicitly skip if it's a noop. */
     int img_width = _img.empty()? _header_width : _img.cols;
@@ -680,6 +763,34 @@ public:
     /* Opacity channel is present with an even number number of channels */
     return _imagehasalpha()? 8 : 0;
   }
+
+  Php::Value borderimage(Php::Parameters &params) {
+    _checkimageloaded();
+
+    std::string hex_color = params[0].stringValue();
+    int width = params[1];
+    int height = params[2];
+    cv::Vec3b bgr_color;
+
+    if (!_decodehexcolor(hex_color, bgr_color)) {
+      _last_error = "Invalid color";
+      return false;
+    }
+
+    if (!_maybedecodeimage()) {
+      return false;
+    }
+
+    cv::Mat dst(_img.rows + height*2,
+      _img.cols + width*2,
+      _img.type(),
+      _bgrtoloadedimagetype(bgr_color));
+
+    _img.copyTo(dst(cv::Rect(width, height, _img.cols, _img.rows)));
+    _img = dst;
+
+    return true;
+  }
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = NULL;
 
@@ -737,10 +848,12 @@ extern "C" {
       Php::ByVal("width", Php::Type::Numeric),
       Php::ByVal("height", Php::Type::Numeric),
       Php::ByVal("filter", Php::Type::Numeric, false),
+      Php::ByVal("fit", Php::Type::Bool, false),
     });
     photon_opencv.method<&Photon_OpenCV::scaleimage>("scaleimage", {
       Php::ByVal("width", Php::Type::Numeric),
       Php::ByVal("height", Php::Type::Numeric),
+      Php::ByVal("fit", Php::Type::Bool, false),
     });
 
     photon_opencv.method<&Photon_OpenCV::rotateimage>("rotateimage", {
@@ -749,6 +862,12 @@ extern "C" {
     });
 
     photon_opencv.method<&Photon_OpenCV::cropimage>("cropimage", {
+      Php::ByVal("width", Php::Type::Numeric),
+      Php::ByVal("height", Php::Type::Numeric),
+    });
+
+    photon_opencv.method<&Photon_OpenCV::borderimage>("borderimage", {
+      Php::ByVal("color", Php::Type::String),
       Php::ByVal("width", Php::Type::Numeric),
       Php::ByVal("height", Php::Type::Numeric),
     });
