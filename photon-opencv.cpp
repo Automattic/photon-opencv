@@ -8,6 +8,7 @@
 #include <lcms2.h>
 #include <zend.h>
 #include <zend_constants.h>
+#include <libheif/heif.h>
 #include "srgb.icc.h"
 
 #define _checkimageloaded() { \
@@ -293,8 +294,81 @@ protected:
     _img = cv::imdecode(raw_data, cv::IMREAD_UNCHANGED);
 
     if (_img.empty()) {
-      _last_error = "Failed to decode image";
-      return false;
+      // Not supported by OpenCV, try manually with libheif
+
+      std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
+        heif_context_alloc(), &heif_context_free);
+      if (!context.get()) {
+        _last_error = "Failed to allocate heif context";
+        return false;
+      }
+
+      heif_error error;
+
+      error = heif_context_read_from_memory_without_copy(context.get(),
+        (void *) _raw_image_data.data(),
+        _raw_image_data.size(),
+        nullptr);
+      if (error.code) {
+        _last_error = "Failed to read heif context: ";
+        _last_error += error.message;
+        return false;
+      }
+
+      std::unique_ptr<heif_image_handle,
+        decltype(&heif_image_handle_release)>
+        handle(nullptr, &heif_image_handle_release);
+      heif_image_handle *raw_handle = nullptr;
+      error = heif_context_get_primary_image_handle(context.get(),
+        &raw_handle);
+      handle.reset(raw_handle);
+      if (error.code) {
+        _last_error = "Failed to get primary image handle: ";
+        _last_error += error.message;
+        return false;
+      }
+
+      std::unique_ptr<heif_image, decltype(&heif_image_release)>
+        h_image(nullptr, &heif_image_release);
+      heif_image *raw_h_image = nullptr;
+      error = heif_decode_image(handle.get(),
+        &raw_h_image,
+        heif_colorspace_RGB,
+        heif_chroma_interleaved_RGB,
+        nullptr);
+      h_image.reset(raw_h_image);
+      if (error.code) {
+        _last_error = "Failed to decode image: ";
+        _last_error += error.message;
+        return false;
+      }
+
+      int stride;
+      uint8_t *data = heif_image_get_plane(h_image.get(),
+        heif_channel_interleaved,
+        &stride);
+      cv::Mat rgb(heif_image_handle_get_height(handle.get()),
+        heif_image_handle_get_width(handle.get()),
+        CV_8UC3,
+        data,
+        stride);
+      cv::cvtColor(rgb, _img, cv::COLOR_RGB2BGR);
+
+      // This redundand ICC profile extraction code can be removed when
+      // exiv2 0.27.4 is released, as it should support the new formats.
+      // For now, it will fail gracefully later in the loading process
+      size_t profile_size = heif_image_get_raw_color_profile_size(
+        h_image.get());
+      if (profile_size) {
+        _icc_profile.resize(profile_size);
+        error = heif_image_handle_get_raw_color_profile(handle.get(),
+          _icc_profile.data());
+        if (error.code) {
+          _last_error = "Failed to extract color profile: ";
+          _last_error += error.message;
+          return false;
+        }
+      }
     }
 
     _enforce8u();
@@ -305,6 +379,7 @@ protected:
   bool _loadimagefromrawdata() {
     /* Clear image in case object is being reused */
     _img = cv::Mat();
+    _icc_profile.clear();
 
     Exiv2::Image::AutoPtr exiv_img;
     try {
@@ -312,7 +387,8 @@ protected:
         (Exiv2::byte *) _raw_image_data.data(), _raw_image_data.size());
     }
     catch (Exiv2::Error &error) {
-      _last_error = error.what();
+      _last_error = "Exiv2 failed to open image: ";
+      _last_error += error.what();
       _raw_image_data.clear();
       return false;
     }
