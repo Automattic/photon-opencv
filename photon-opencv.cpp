@@ -29,6 +29,7 @@ protected:
   std::string _raw_image_data;
   int _header_width;
   int _header_height;
+  int _header_channels;
   Exiv2::Value::AutoPtr _original_orientation;
 
   static cmsHPROFILE _srgb_profile;
@@ -407,10 +408,12 @@ protected:
     switch (exiv_img->imageType()) {
       case Exiv2::ImageType::png:
         _format = "png";
+        _header_channels = _get_channels_from_raw_png();
         break;
 
       case Exiv2::ImageType::jpeg:
         _format = "jpeg";
+        _header_channels = _get_channels_from_raw_jpg();
         break;
 
       default:
@@ -419,6 +422,7 @@ protected:
         if (!_maybedecodeimage()) {
             return false;
         }
+        _header_channels = -1;
         break;
     }
 
@@ -441,7 +445,7 @@ protected:
     }
 
     /* Palettes are automatically converted to RGB on decode */
-    switch (_img.channels()) {
+    switch (_img.empty()? _header_channels : _img.channels()) {
       case 1:
         _type = _gmagick_imgtype_grayscale;
         break;
@@ -538,6 +542,50 @@ protected:
       // Taller
       height = std::max(1, (int) round(width / img_ratio));
     }
+  }
+
+  int _get_channels_from_raw_jpg() {
+    const uint8_t *data = (uint8_t *) _raw_image_data.data();
+
+    // Assumes JPG was already validated, minimal confidence checks
+    if (_raw_image_data.size() < 2
+        || data[0] != 0xff
+        || data[1] != 0xd8) {
+      // Unexpected first bytes, default to 3, the most common case
+      return 3;
+    }
+
+    // Look for a SOF segment (0xffc0 - 0xffcf)
+    size_t o = 2;
+    while (o + 3 < _raw_image_data.size()
+        && (data[o] != 0xff || (data[o+1] & 0xf0) != 0xc0)) {
+      o += 2 + ((data[o+2] << 8) | data[o+3]);
+    }
+
+    if (o + 9 >= _raw_image_data.size()) {
+      // Somehow malformed
+      return 3;
+    }
+
+    // No alpha. CMYK will result in RGB image when decoded
+    return data[o+9] == 1? 1 : 3;
+  }
+
+  int _get_channels_from_raw_png() {
+    const uint8_t expected_first_bytes[] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a,
+        0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52};
+    const uint8_t *data = (uint8_t *) _raw_image_data.data();
+
+    // Assumes PNG was already validated, minimal confidence checks
+    if (_raw_image_data.size() < 32
+        || memcmp(expected_first_bytes, data, sizeof(expected_first_bytes))) {
+      // Unexpected default to 3, the most common case
+      return 3;
+    }
+
+    // Palettes will be automatically converted to RGB
+    uint8_t color_type = data[sizeof(expected_first_bytes)+9];
+    return 1 + (color_type & 2? 2 : 0) + (color_type & 4? 1 : 0);
   }
 
 public:
