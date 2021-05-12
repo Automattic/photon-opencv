@@ -408,12 +408,12 @@ protected:
     switch (exiv_img->imageType()) {
       case Exiv2::ImageType::png:
         _format = "png";
-        _header_channels = _get_channels_from_raw_png();
+        _header_channels = _getchannelsfromrawpng();
         break;
 
       case Exiv2::ImageType::jpeg:
         _format = "jpeg";
-        _header_channels = _get_channels_from_raw_jpg();
+        _header_channels = _getchannelsfromrawjpg();
         break;
 
       default:
@@ -544,7 +544,7 @@ protected:
     }
   }
 
-  int _get_channels_from_raw_jpg() {
+  int _getchannelsfromrawjpg() {
     const uint8_t *data = (uint8_t *) _raw_image_data.data();
 
     // Assumes JPG was already validated, minimal confidence checks
@@ -571,7 +571,7 @@ protected:
     return data[o+9] == 1? 1 : 3;
   }
 
-  int _get_channels_from_raw_png() {
+  int _getchannelsfromrawpng() {
     const uint8_t expected_first_bytes[] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a,
         0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52};
     const uint8_t *data = (uint8_t *) _raw_image_data.data();
