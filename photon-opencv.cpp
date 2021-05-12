@@ -588,6 +588,61 @@ protected:
     return 1 + (color_type & 2? 2 : 0) + (color_type & 4? 1 : 0);
   }
 
+  bool _encodeimage(std::vector<uint8_t> &output_buffer) {
+    /* OpenCV strips the profile, we need to apply it first */
+    _converttosrgb();
+
+    std::vector<int> img_parameters;
+    if ("jpeg" == _format) {
+      img_parameters.push_back(cv::IMWRITE_JPEG_QUALITY);
+      img_parameters.push_back(_compression_quality);
+    }
+    else if ("png" == _format) {
+      /* GMagick uses a single scalar for storing two values:
+        _compressioN_quality = compression_level*10 + filter_type */
+      img_parameters.push_back(cv::IMWRITE_PNG_COMPRESSION);
+      img_parameters.push_back(_compression_quality/10);
+      /* OpenCV does not support setting the filters like GMagick,
+         instead we get to pick the strategy, so we ignore it
+         https://docs.opencv.org/4.1.0/d4/da8/group__imgcodecs.html */
+    }
+
+    if (!cv::imencode("." + _format, _img, output_buffer, img_parameters)) {
+      _last_error = "Failed to encode image";
+      return false;
+    }
+
+    /* Manually reinsert orientation exif data */
+    if (_original_orientation.get()) {
+      Exiv2::Image::AutoPtr exiv_img;
+      try {
+        exiv_img = Exiv2::ImageFactory::open(output_buffer.data(),
+            output_buffer.size());
+        exiv_img->readMetadata();
+      }
+      catch (Exiv2::Error &error) {
+        _last_error = error.what();
+        return false;
+      }
+
+      auto &exif = exiv_img->exifData();
+      Exiv2::ExifKey orientation_key("Exif.Image.Orientation");
+      exif.add(orientation_key, _original_orientation.get());
+      try {
+        exiv_img->writeMetadata();
+        output_buffer.resize(exiv_img->io().size());
+        exiv_img->io().read(output_buffer.data(), output_buffer.size());
+      }
+      catch (Exiv2::Error &error) {
+        _last_error = error.what();
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+
 public:
   Photon_OpenCV() {
     /* Static local intilization is thread safe */
@@ -620,73 +675,50 @@ public:
   Php::Value writeimage(Php::Parameters &params) {
     _checkimageloaded();
 
-    std::string wanted_output = params[0].stringValue();
+    std::string output_path = params[0].stringValue();
 
-    /* No ops were performed */
+    // No ops, we can return the original image
     if (_img.empty()) {
-      std::ofstream output(wanted_output,
+      std::ofstream output(output_path,
           std::ios::out | std::ios::binary);
       output << _raw_image_data;
+      if (output.fail()) {
+        _last_error = "Failed to write raw image to disk";
+      }
       return true;
     }
 
-    /* OpenCV strips the profile, we need to apply it first */
-    _converttosrgb();
-
-    std::vector<int> img_parameters;
-    if ("jpeg" == _format) {
-      img_parameters.push_back(cv::IMWRITE_JPEG_QUALITY);
-      img_parameters.push_back(_compression_quality);
-    }
-    else if ("png" == _format) {
-      /* GMagick uses a single scalar for storing two values:
-        _compressioN_quality = compression_level*10 + filter_type */
-      img_parameters.push_back(cv::IMWRITE_PNG_COMPRESSION);
-      img_parameters.push_back(_compression_quality/10);
-      /* OpenCV does not support setting the filters like GMagick,
-         instead we get to pick the strategy, so we ignore it
-         https://docs.opencv.org/4.1.0/d4/da8/group__imgcodecs.html */
-    }
-
-    /* OpenCV looks at the extension to determine the format.
-       We make sure it's there, then rename it to the expected filename. */
-    std::string actual_output = wanted_output + "." + _format;
-    if (!cv::imwrite(actual_output, _img, img_parameters)) {
-      _last_error = "Failed to encode image";
+    std::vector<uint8_t> output_buffer;
+    if (!_encodeimage(output_buffer)) {
       return false;
     }
-    if (std::rename(actual_output.c_str(), wanted_output.c_str())) {
-      _last_error = "Failed to rename generated image";
-      return false;
-    }
-
-    /* Manually reinsert orientation exif data */
-    if (_original_orientation.get()) {
-      Exiv2::Image::AutoPtr exiv_img;
-      try {
-        exiv_img = Exiv2::ImageFactory::open(wanted_output, false);
-        exiv_img->readMetadata();
-      }
-      catch (Exiv2::Error &error) {
-        _last_error = error.what();
-        return false;
-      }
-
-      auto &exif = exiv_img->exifData();
-      Exiv2::ExifKey orientation_key("Exif.Image.Orientation");
-      exif.add(orientation_key, _original_orientation.get());
-      try {
-        exiv_img->writeMetadata();
-      }
-      catch (Exiv2::Error &error) {
-        _last_error = error.what();
-        return false;
+    else {
+      std::ofstream output(output_path,
+          std::ios::out | std::ios::binary);
+      output.write((char *) output_buffer.data(), output_buffer.size());
+      if (output.fail()) {
+        _last_error = "Failed to write encoded image to disk";
       }
     }
 
     return true;
   }
 
+  Php::Value getimageblob() {
+    _checkimageloaded();
+
+    // No ops, we can return the original image
+    if (_img.empty()) {
+      return _raw_image_data;
+    }
+
+    std::vector<uint8_t> output_buffer;
+    if (!_encodeimage(output_buffer)) {
+      return false;
+    }
+
+    return std::string((char *) output_buffer.data(), output_buffer.size());
+  }
 
   Php::Value getlasterror() {
     return _last_error;
@@ -945,6 +977,7 @@ extern "C" {
     photon_opencv.method<&Photon_OpenCV::writeimage>("writeimage", {
       Php::ByVal("output", Php::Type::String),
     });
+    photon_opencv.method<&Photon_OpenCV::getimageblob>("getimageblob");
 
     photon_opencv.method<&Photon_OpenCV::getlasterror>("getlasterror");
 
