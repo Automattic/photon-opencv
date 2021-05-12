@@ -592,6 +592,58 @@ protected:
     /* OpenCV strips the profile, we need to apply it first */
     _converttosrgb();
 
+    if ("avif" == _format) {
+      // Explicit rotation handling and early return, as exiv2 doesn't support
+      // the format and libheif provides no way of inseting orientation
+      // metadata. Remove rotation code and refactor when exiv2 0.27.4 is out
+      cv::Mat original_img;
+
+      long orientation = _original_orientation.get()?
+        _original_orientation.get()->toLong() : 1;
+      if (orientation < 1 || orientation > 8) {
+        orientation = 1;
+      }
+
+      if (orientation != 1) {
+        int rotation = -1;
+        switch (orientation) {
+          case 3:
+          case 4:
+            rotation = cv::ROTATE_180;
+            break;
+
+          case 5:
+          case 6:
+            rotation = cv::ROTATE_90_CLOCKWISE;
+            break;
+
+          case 7:
+          case 8:
+            rotation = cv::ROTATE_90_COUNTERCLOCKWISE;
+            break;
+        }
+
+        _img.copyTo(original_img);
+        if (rotation != -1) {
+          cv::rotate(_img, _img, rotation);
+        }
+        if (2 == orientation
+            || 4 == orientation
+            || 5 == orientation
+            || 7 == orientation) {
+          cv::flip(_img, _img, 1);
+        }
+      }
+
+      bool status = _encodeheifimage(heif_compression_AV1, output_buffer);
+
+      if (!original_img.empty()) {
+        _img = original_img;
+      }
+
+      return status;
+    }
+
     std::vector<int> img_parameters;
     if ("jpeg" == _format) {
       img_parameters.push_back(cv::IMWRITE_JPEG_QUALITY);
@@ -606,9 +658,8 @@ protected:
          instead we get to pick the strategy, so we ignore it
          https://docs.opencv.org/4.1.0/d4/da8/group__imgcodecs.html */
     }
-
     if (!cv::imencode("." + _format, _img, output_buffer, img_parameters)) {
-      _last_error = "Failed to encode image";
+      _last_error = "Failed to encode image with opencv";
       return false;
     }
 
@@ -642,6 +693,125 @@ protected:
     return true;
   }
 
+  bool _encodeheifimage(heif_compression_format heif_format,
+      std::vector<uint8_t> &output_buffer) {
+
+    heif_error error;
+
+    std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
+      heif_context_alloc(), &heif_context_free);
+
+    std::unique_ptr<heif_encoder, decltype(&heif_encoder_release)> encoder(
+      nullptr,
+      &heif_encoder_release);
+    heif_encoder *raw_encoder;
+    error = heif_context_get_encoder_for_format(context.get(),
+        heif_format,
+        &raw_encoder);
+    encoder.reset(raw_encoder);
+    if (error.code != heif_error_Ok) {
+      _last_error = "Heif encoding creation: "
+        + std::string(error.message);
+      return false;
+    }
+
+    heif_encoder_set_lossy_quality(encoder.get(), _compression_quality);
+
+    heif_colorspace colorspace = _img.channels() >= 3?
+      heif_colorspace_RGB : heif_colorspace_monochrome;
+    heif_chroma chroma = _img.channels() >= 3?
+      heif_chroma_444 : heif_chroma_monochrome;
+
+    heif_channel channel_map[][4] = {
+      {heif_channel_Y},
+      {heif_channel_Y, heif_channel_Alpha},
+      {heif_channel_B, heif_channel_G, heif_channel_R},
+      {heif_channel_B, heif_channel_G, heif_channel_R, heif_channel_Alpha},
+    };
+
+    std::unique_ptr<heif_image, decltype(&heif_image_release)> image(
+      nullptr,
+      &heif_image_release);
+    heif_image *raw_image;
+    error = heif_image_create(_img.cols,
+        _img.rows,
+        colorspace,
+        chroma,
+        &raw_image);
+    image.reset(raw_image);
+    if (error.code != heif_error_Ok) {
+      _last_error = "Heif image creation: "
+        + std::string(error.message);
+      return false;
+    }
+
+    std::vector<cv::Mat> channel_mats;
+    for (int i = 0; i < _img.channels(); i++) {
+      heif_channel channel_type = channel_map[_img.channels()-1][i];
+
+      error = heif_image_add_plane(image.get(),
+          channel_type,
+          _img.cols,
+          _img.rows,
+          8);
+      if (error.code != heif_error_Ok) {
+        _last_error = "Heif plane addition: "
+          + std::string(error.message);
+        return false;
+      }
+
+      int stride;
+      uint8_t *data = heif_image_get_plane(image.get(), channel_type, &stride);
+      channel_mats.emplace_back(_img.rows, _img.cols, CV_8UC1, data, stride);
+    }
+
+    int trivial_fromto[] = {0, 0, 1, 1, 2, 2, 3, 3};
+    cv::mixChannels(&_img,
+        1,
+        channel_mats.data(),
+        channel_mats.size(),
+        trivial_fromto,
+        _img.channels());
+
+    error = heif_context_encode_image(context.get(),
+        image.get(),
+        encoder.get(),
+        nullptr,
+        nullptr);
+    if (error.code != heif_error_Ok) {
+      _last_error = "Heif image encoding: "
+        + std::string(error.message);
+      return false;
+    }
+
+    heif_writer simple_ram_copier;
+    simple_ram_copier.writer_api_version = 1;
+    simple_ram_copier.write = []
+      (heif_context *ctx, const void *data, size_t size, void *userdata) {
+        (void) ctx;
+
+        std::vector<uint8_t> *buffer = (std::vector<uint8_t> *) userdata;
+        buffer->resize(size);
+        std::memcpy(buffer->data(), data, size);
+
+        heif_error error;
+        error.code = heif_error_Ok;
+        return error;
+      };
+
+
+    error = heif_context_write(context.get(),
+        &simple_ram_copier,
+        &output_buffer);
+    if (error.code != heif_error_Ok) {
+      _last_error = "Heif context writing: "
+        + std::string(error.message);
+      return false;
+    }
+    heif_context_write_to_file(context.get(), "/tmp/force.avif");
+
+    return true;
+  }
 
 public:
   Photon_OpenCV() {
