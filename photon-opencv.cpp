@@ -47,6 +47,8 @@ protected:
   static int _gmagick_imgtype_truecolor;
   static int _gmagick_imgtype_truecolormatte;
 
+  static const heif_encoder_descriptor *_aom_descriptor;
+
   void _enforce8u() {
     if (CV_8U != _img.depth()) {
       /* Proper convertion is mostly guess work, but it's fairly rare and
@@ -230,7 +232,18 @@ protected:
     /* Load default sRGB profile */
     _srgb_profile = cmsOpenProfileFromMem(srgb_icc, sizeof(srgb_icc)-1);
     if (!_srgb_profile) {
-      throw Php::Exception("Failed to decode builtin sRGB profile");
+      throw std::runtime_error("Failed to decode builtin sRGB profile");
+    }
+
+    std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
+      heif_context_alloc(), &heif_context_free);
+
+    if (!heif_context_get_encoder_descriptors(context.get(),
+        heif_compression_AV1,
+        "aom",
+        &_aom_descriptor,
+        1)) {
+      throw std::runtime_error("AOM encoder for AVIF images not available");
     }
   }
 
@@ -299,10 +312,6 @@ protected:
 
       std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
         heif_context_alloc(), &heif_context_free);
-      if (!context.get()) {
-        _last_error = "Failed to allocate heif context";
-        return false;
-      }
 
       heif_error error;
 
@@ -705,9 +714,18 @@ protected:
       nullptr,
       &heif_encoder_release);
     heif_encoder *raw_encoder;
-    error = heif_context_get_encoder_for_format(context.get(),
-        heif_format,
-        &raw_encoder);
+
+    // Force pick AOM for AVIF images, as it supports lossless encoding
+    if (heif_compression_AV1 == heif_format) {
+      error = heif_context_get_encoder(context.get(),
+          _aom_descriptor,
+          &raw_encoder);
+    }
+    else {
+      error = heif_context_get_encoder_for_format(context.get(),
+          heif_format,
+          &raw_encoder);
+    }
     encoder.reset(raw_encoder);
     if (error.code != heif_error_Ok) {
       _last_error = "Heif encoding creation: "
@@ -715,7 +733,33 @@ protected:
       return false;
     }
 
-    heif_encoder_set_lossy_quality(encoder.get(), _compression_quality);
+    std::unique_ptr<heif_encoding_options,
+      decltype(&heif_encoding_options_free)>
+      options(nullptr, &heif_encoding_options_free);
+    std::unique_ptr<heif_color_profile_nclx,
+      decltype(&heif_nclx_color_profile_free)>
+      nclx(nullptr, &heif_nclx_color_profile_free);
+
+    if (_compression_quality > 100) {
+      heif_encoder_set_lossless(encoder.get(), 1);
+      heif_encoder_set_parameter(encoder.get(), "chroma", "444");
+
+      nclx.reset(heif_nclx_color_profile_alloc());
+      // Only set version 1 fields
+      nclx->matrix_coefficients = heif_matrix_coefficients_RGB_GBR;
+      nclx->transfer_characteristics =
+        heif_transfer_characteristic_unspecified;
+      nclx->color_primaries = heif_color_primaries_unspecified;
+      nclx->full_range_flag = 1;
+
+      options.reset(heif_encoding_options_alloc());
+      options->output_nclx_profile = nclx.get();
+
+    }
+    else {
+      heif_encoder_set_lossy_quality(encoder.get(),
+          std::max(0, _compression_quality));
+    }
 
     heif_colorspace colorspace = _img.channels() >= 3?
       heif_colorspace_RGB : heif_colorspace_monochrome;
@@ -776,7 +820,7 @@ protected:
     error = heif_context_encode_image(context.get(),
         image.get(),
         encoder.get(),
-        nullptr,
+        options.get(),
         nullptr);
     if (error.code != heif_error_Ok) {
       _last_error = "Heif image encoding: "
@@ -799,7 +843,6 @@ protected:
         return error;
       };
 
-
     error = heif_context_write(context.get(),
         &simple_ram_copier,
         &output_buffer);
@@ -808,7 +851,6 @@ protected:
         + std::string(error.message);
       return false;
     }
-    heif_context_write_to_file(context.get(), "/tmp/force.avif");
 
     return true;
   }
@@ -1118,7 +1160,8 @@ public:
     return true;
   }
 };
-cmsHPROFILE Photon_OpenCV::_srgb_profile = NULL;
+cmsHPROFILE Photon_OpenCV::_srgb_profile = nullptr;
+const heif_encoder_descriptor *Photon_OpenCV::_aom_descriptor = nullptr;
 
 int Photon_OpenCV::_gmagick_channel_opacity = -1;
 int Photon_OpenCV::_gmagick_filter_lanczos = -1;
