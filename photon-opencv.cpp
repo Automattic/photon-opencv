@@ -249,7 +249,8 @@ protected:
 
   bool _imagehasalpha() {
     /* Even number of channels means it's either GA or BGRA */
-    return !(_img.channels() & 1);
+    int num_channels = _img.empty()? _header_channels : _img.channels();
+    return !(num_channels & 1);
   }
 
   /* Assumes alpha is the last channel */
@@ -1121,15 +1122,14 @@ public:
 
     int channel = params[0];
 
-    /* If the image has not been decoded, pretend all channels exist.
-       Gmagick's channels don't map directly to OpenCV's, but Photon is only
-       interested in the opacity */
-    if (_img.empty() || channel != _gmagick_channel_opacity) {
-      return 8;
+    /* Gmagick's channels don't map directly to OpenCV's, we convert everything
+     * to 8 bits. Photon is only interested in the opacity. Assume all other
+     * channels are valid */
+    if (channel == _gmagick_channel_opacity) {
+      return _imagehasalpha()? 8 : 0;
     }
 
-    /* Opacity channel is present with an even number number of channels */
-    return _imagehasalpha()? 8 : 0;
+    return 8;
   }
 
   Php::Value borderimage(Php::Parameters &params) {
