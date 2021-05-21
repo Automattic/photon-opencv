@@ -34,19 +34,6 @@ protected:
 
   static cmsHPROFILE _srgb_profile;
 
-  /* Cached Gmagick constants */
-  static int _gmagick_channel_opacity;
-  static int _gmagick_filter_lanczos;
-  static int _gmagick_filter_cubic;
-  static int _gmagick_filter_triangle;
-  static int _gmagick_filter_point;
-  static int _gmagick_filter_box;
-
-  static int _gmagick_imgtype_grayscale;
-  static int _gmagick_imgtype_grayscalematte;
-  static int _gmagick_imgtype_truecolor;
-  static int _gmagick_imgtype_truecolormatte;
-
   static const heif_encoder_descriptor *_aom_descriptor;
 
   void _enforce8u() {
@@ -180,19 +167,19 @@ protected:
 
     int opencv_filter = default_filter;
 
-    if (filter == _gmagick_filter_lanczos) {
+    if (filter == FILTER_LANCZOS) {
       opencv_filter = cv::INTER_LANCZOS4;
     }
-    else if (filter == _gmagick_filter_point) {
+    else if (filter == FILTER_POINT) {
       opencv_filter = cv::INTER_NEAREST;
     }
-    else if (filter == _gmagick_filter_box) {
+    else if (filter == FILTER_BOX) {
       opencv_filter = cv::INTER_AREA;
     }
-    else if (filter == _gmagick_filter_triangle) {
+    else if (filter == FILTER_TRIANGLE) {
       opencv_filter = cv::INTER_LINEAR;
     }
-    else if (filter == _gmagick_filter_cubic) {
+    else if (filter == FILTER_CUBIC) {
       opencv_filter = cv::INTER_CUBIC;
     }
 
@@ -211,24 +198,6 @@ protected:
   }
 
   static void _initialize() {
-    /* Load constants */
-    _gmagick_channel_opacity = _getconstantex("Gmagick::CHANNEL_OPACITY");
-
-    _gmagick_filter_lanczos = _getconstantex("Gmagick::FILTER_LANCZOS");
-    _gmagick_filter_cubic = _getconstantex("Gmagick::FILTER_CUBIC");
-    _gmagick_filter_triangle = _getconstantex("Gmagick::FILTER_TRIANGLE");
-    _gmagick_filter_point = _getconstantex("Gmagick::FILTER_POINT");
-    _gmagick_filter_box = _getconstantex("Gmagick::FILTER_BOX");
-
-    _gmagick_imgtype_grayscale = _getconstantex(
-        "Gmagick::IMGTYPE_GRAYSCALE");
-    _gmagick_imgtype_grayscalematte = _getconstantex(
-        "Gmagick::IMGTYPE_GRAYSCALEMATTE");
-    _gmagick_imgtype_truecolor = _getconstantex(
-        "Gmagick::IMGTYPE_TRUECOLOR");
-    _gmagick_imgtype_truecolormatte = _getconstantex(
-        "Gmagick::IMGTYPE_TRUECOLORMATTE");
-
     /* Load default sRGB profile */
     _srgb_profile = cmsOpenProfileFromMem(srgb_icc, sizeof(srgb_icc)-1);
     if (!_srgb_profile) {
@@ -457,19 +426,19 @@ protected:
     /* Palettes are automatically converted to RGB on decode */
     switch (_img.empty()? _header_channels : _img.channels()) {
       case 1:
-        _type = _gmagick_imgtype_grayscale;
+        _type = IMGTYPE_GRAYSCALE;
         break;
 
       case 2:
-        _type = _gmagick_imgtype_grayscalematte;
+        _type = IMGTYPE_GRAYSCALEMATTE;
         break;
 
       case 3:
-        _type = _gmagick_imgtype_truecolor;
+        _type = IMGTYPE_TRUECOLOR;
         break;
 
       case 4:
-        _type = _gmagick_imgtype_truecolormatte;
+        _type = IMGTYPE_TRUECOLORMATTE;
         break;
 
       default:
@@ -857,6 +826,22 @@ protected:
   }
 
 public:
+  /* Gmagick constant replacements */
+  static const int CHANNEL_OPACITY;
+  static const int COLORSPACE_RGB;
+  static const int FILTER_LANCZOS;
+  static const int FILTER_CUBIC;
+  static const int FILTER_TRIANGLE;
+  static const int FILTER_POINT;
+  static const int FILTER_BOX;
+  static const int IMGTYPE_COLORSEPARATIONMATTE;
+  static const int IMGTYPE_GRAYSCALE;
+  static const int IMGTYPE_GRAYSCALEMATTE;
+  static const int IMGTYPE_PALETTE;
+  static const int IMGTYPE_PALETTEMATTE;
+  static const int IMGTYPE_TRUECOLOR;
+  static const int IMGTYPE_TRUECOLORMATTE;
+
   Photon_OpenCV() {
     /* Static local intilization is thread safe */
     static std::once_flag initialized;
@@ -1125,7 +1110,7 @@ public:
     /* Gmagick's channels don't map directly to OpenCV's, we convert everything
      * to 8 bits. Photon is only interested in the opacity. Assume all other
      * channels are valid */
-    if (channel == _gmagick_channel_opacity) {
+    if (channel == CHANNEL_OPACITY) {
       return _imagehasalpha()? 8 : 0;
     }
 
@@ -1163,23 +1148,48 @@ public:
 cmsHPROFILE Photon_OpenCV::_srgb_profile = nullptr;
 const heif_encoder_descriptor *Photon_OpenCV::_aom_descriptor = nullptr;
 
-int Photon_OpenCV::_gmagick_channel_opacity = -1;
-int Photon_OpenCV::_gmagick_filter_lanczos = -1;
-int Photon_OpenCV::_gmagick_filter_cubic = -1;
-int Photon_OpenCV::_gmagick_filter_triangle = -1;
-int Photon_OpenCV::_gmagick_filter_point = -1;
-int Photon_OpenCV::_gmagick_filter_box = -1;
-
-int Photon_OpenCV::_gmagick_imgtype_grayscale = -1;
-int Photon_OpenCV::_gmagick_imgtype_grayscalematte = -1;
-int Photon_OpenCV::_gmagick_imgtype_truecolor = -1;
-int Photon_OpenCV::_gmagick_imgtype_truecolormatte = -1;
+const int Photon_OpenCV::CHANNEL_OPACITY = 7;
+const int Photon_OpenCV::COLORSPACE_RGB = 1;
+const int Photon_OpenCV::FILTER_LANCZOS = 13;
+const int Photon_OpenCV::FILTER_CUBIC = 10;
+const int Photon_OpenCV::FILTER_TRIANGLE = 3;
+const int Photon_OpenCV::FILTER_POINT = 1;
+const int Photon_OpenCV::FILTER_BOX = 2;
+const int Photon_OpenCV::IMGTYPE_COLORSEPARATIONMATTE = 9;
+const int Photon_OpenCV::IMGTYPE_GRAYSCALE = 2;
+const int Photon_OpenCV::IMGTYPE_GRAYSCALEMATTE = 3;
+const int Photon_OpenCV::IMGTYPE_PALETTE = 4;
+const int Photon_OpenCV::IMGTYPE_PALETTEMATTE = 5;
+const int Photon_OpenCV::IMGTYPE_TRUECOLOR = 6;
+const int Photon_OpenCV::IMGTYPE_TRUECOLORMATTE = 7;
 
 extern "C" {
   PHPCPP_EXPORT void *get_module() {
     static Php::Extension extension("photon-opencv", "0.2.8");
 
     Php::Class<Photon_OpenCV> photon_opencv("Photon_OpenCV");
+
+    photon_opencv.constant("CHANNEL_OPACITY", Photon_OpenCV::CHANNEL_OPACITY);
+    photon_opencv.constant("COLORSPACE_RGB", Photon_OpenCV::COLORSPACE_RGB);
+    photon_opencv.constant("FILTER_LANCZOS", Photon_OpenCV::FILTER_LANCZOS);
+    photon_opencv.constant("FILTER_CUBIC", Photon_OpenCV::FILTER_CUBIC);
+    photon_opencv.constant("FILTER_TRIANGLE", Photon_OpenCV::FILTER_TRIANGLE);
+    photon_opencv.constant("FILTER_POINT", Photon_OpenCV::FILTER_POINT);
+    photon_opencv.constant("FILTER_BOX", Photon_OpenCV::FILTER_BOX);
+    photon_opencv.constant("IMGTYPE_COLORSEPARATIONMATTE",
+        Photon_OpenCV::IMGTYPE_COLORSEPARATIONMATTE);
+    photon_opencv.constant("IMGTYPE_GRAYSCALE",
+        Photon_OpenCV::IMGTYPE_GRAYSCALE);
+    photon_opencv.constant("IMGTYPE_GRAYSCALEMATTE",
+        Photon_OpenCV::IMGTYPE_GRAYSCALEMATTE);
+    photon_opencv.constant("IMGTYPE_PALETTE",
+        Photon_OpenCV::IMGTYPE_PALETTE);
+    photon_opencv.constant("IMGTYPE_PALETTEMATTE",
+        Photon_OpenCV::IMGTYPE_PALETTEMATTE);
+    photon_opencv.constant("IMGTYPE_TRUECOLOR",
+        Photon_OpenCV::IMGTYPE_TRUECOLOR);
+    photon_opencv.constant("IMGTYPE_TRUECOLORMATTE",
+        Photon_OpenCV::IMGTYPE_TRUECOLORMATTE);
 
     photon_opencv.method<&Photon_OpenCV::readimageblob>("readimageblob", {
       Php::ByRef("raw_image_data", Php::Type::String),
