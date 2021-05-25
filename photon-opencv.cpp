@@ -13,8 +13,7 @@
 
 #define _checkimageloaded() { \
   if (_raw_image_data.empty()) { \
-    _last_error = "No image loaded"; \
-    return false; \
+    throw Php::Exception("Can not process empty object"); \
   } \
 }
 
@@ -266,11 +265,11 @@ protected:
     }
   }
 
-  bool _maybedecodeimage() {
+  void _maybedecodeimage() {
     _checkimageloaded();
 
     if (!_img.empty()) {
-      return true;
+      return;
     }
 
     cv::Mat raw_data(1, _raw_image_data.size(), CV_8UC1,
@@ -290,9 +289,8 @@ protected:
         _raw_image_data.size(),
         nullptr);
       if (error.code) {
-        _last_error = "Failed to read heif context: ";
-        _last_error += error.message;
-        return false;
+        throw Php::Exception(std::string("Failed to read heif context: ")
+            + error.message);
       }
 
       std::unique_ptr<heif_image_handle,
@@ -303,9 +301,9 @@ protected:
         &raw_handle);
       handle.reset(raw_handle);
       if (error.code) {
-        _last_error = "Failed to get primary image handle: ";
-        _last_error += error.message;
-        return false;
+        throw Php::Exception(
+            std::string("Failed to get primary image handle: ")
+            + error.message);
       }
 
       std::unique_ptr<heif_image, decltype(&heif_image_release)>
@@ -318,9 +316,8 @@ protected:
         nullptr);
       h_image.reset(raw_h_image);
       if (error.code) {
-        _last_error = "Failed to decode image: ";
-        _last_error += error.message;
-        return false;
+        throw Php::Exception(std::string("Failed to decode image: ")
+            + error.message);
       }
 
       int stride;
@@ -344,16 +341,13 @@ protected:
         error = heif_image_handle_get_raw_color_profile(handle.get(),
           _icc_profile.data());
         if (error.code) {
-          _last_error = "Failed to extract color profile: ";
-          _last_error += error.message;
-          return false;
+          throw Php::Exception(std::string("Failed to extract color profile: ")
+              + error.message);
         }
       }
     }
 
     _enforce8u();
-
-    return true;
   }
 
   bool _loadimagefromrawdata() {
@@ -379,9 +373,7 @@ protected:
     catch(Exiv2::Error &error) {
       // Failing to read the metadata is not critical, but it requires us to
       // try to decode the image to get the proper information early
-      if (!_maybedecodeimage()) {
-          return false;
-      }
+      _maybedecodeimage();
     }
 
     switch (exiv_img->imageType()) {
@@ -398,9 +390,7 @@ protected:
       default:
         /* Default to jpeg, but disable lazy loading */
         _format = "jpeg";
-        if (!_maybedecodeimage()) {
-            return false;
-        }
+        _maybedecodeimage();
         _header_channels = -1;
         break;
     }
@@ -513,7 +503,7 @@ protected:
     double img_ratio = (double) img_width / (double) img_height;
     double new_ratio = (double) width / (double) height;
 
-    if ( new_ratio > img_ratio ) {
+    if (new_ratio > img_ratio) {
       // Wider
       width = std::max(1, (int) round(height * img_ratio));
     }
@@ -637,8 +627,24 @@ protected:
          instead we get to pick the strategy, so we ignore it
          https://docs.opencv.org/4.1.0/d4/da8/group__imgcodecs.html */
     }
-    if (!cv::imencode("." + _format, _img, output_buffer, img_parameters)) {
+
+    std::string failure_details;
+    bool encoded = false;
+    try {
+      encoded = cv::imencode("." + _format,
+          _img,
+          output_buffer,
+          img_parameters);
+    }
+    catch (cv::Exception &e) {
+      failure_details = e.what();
+    }
+
+    if (!encoded) {
       _last_error = "Failed to encode image with opencv";
+      if (failure_details.size()) {
+        _last_error += ": " + failure_details;
+      }
       return false;
     }
 
@@ -848,12 +854,18 @@ public:
     std::call_once(initialized, _initialize);
   }
 
-  Php::Value readimageblob(Php::Parameters &params) {
+  void readimageblob(Php::Parameters &params) {
     _raw_image_data = params[0].stringValue();
-    return _loadimagefromrawdata();
+    if (_raw_image_data.empty()) {
+      throw Php::Exception("Zero size image string passed");
+    }
+
+    if (!_loadimagefromrawdata()) {
+      throw Php::Exception("Unable to read image blob: " + _last_error);
+    }
   }
 
-  Php::Value readimage(Php::Parameters &params) {
+  void readimage(Php::Parameters &params) {
     std::fstream input(params[0].stringValue(),
         std::ios::in | std::ios::binary);
 
@@ -867,13 +879,20 @@ public:
       _raw_image_data.resize(0);
     }
 
-    return _loadimagefromrawdata();
+    if (!_loadimagefromrawdata()) {
+      throw Php::Exception("Unable to read image: " + _last_error);
+    }
   }
 
-  Php::Value writeimage(Php::Parameters &params) {
+  void writeimage(Php::Parameters &params) {
     _checkimageloaded();
 
     std::string output_path = params[0].stringValue();
+
+    if (output_path.empty()) {
+      throw Php::Exception("Unable to write the image. "
+          "Empty filename string provided");
+    }
 
     // No ops, we can return the original image
     if (_img.empty()) {
@@ -881,25 +900,23 @@ public:
           std::ios::out | std::ios::binary);
       output << _raw_image_data;
       if (output.fail()) {
-        _last_error = "Failed to write raw image to disk";
+        throw Php::Exception("Unable to write the image to disk");
       }
-      return true;
+      return;
     }
 
     std::vector<uint8_t> output_buffer;
     if (!_encodeimage(output_buffer)) {
-      return false;
+      throw Php::Exception("Unable to encode image: " + _last_error);
     }
     else {
       std::ofstream output(output_path,
           std::ios::out | std::ios::binary);
       output.write((char *) output_buffer.data(), output_buffer.size());
       if (output.fail()) {
-        _last_error = "Failed to write encoded image to disk";
+        throw Php::Exception("Unable to write the encoded image to disk");
       }
     }
-
-    return true;
   }
 
   Php::Value getimageblob() {
@@ -912,7 +929,7 @@ public:
 
     std::vector<uint8_t> output_buffer;
     if (!_encodeimage(output_buffer)) {
-      return false;
+      throw Php::Exception("Unable to encode image: " + _last_error);
     }
 
     return std::string((char *) output_buffer.data(), output_buffer.size());
@@ -938,27 +955,22 @@ public:
     return _format;
   }
 
-  Php::Value setimageformat(Php::Parameters &params) {
+  void setimageformat(Php::Parameters &params) {
     std::string new_format = params[0].stringValue();
     std::transform(new_format.begin(), new_format.end(),
       new_format.begin(), ::tolower);
 
     if (new_format == _format) {
-      return true;
+      return;
     }
 
-    if (!_maybedecodeimage()) {
-      return false;
-    }
+    _maybedecodeimage();
 
     _format = new_format;
-
-    return true;
   }
 
-  Php::Value setcompressionquality(Php::Parameters &params) {
+  void setcompressionquality(Php::Parameters &params) {
     _compression_quality = params[0];
-    return true;
   }
 
   Php::Value getimagetype() {
@@ -966,12 +978,11 @@ public:
     return _type;
   }
 
-  Php::Value setimagetype() {
-    _last_error = "setimagetype() is not implemented";
-    return false;
+  void setimagetype() {
+    // Unimplemented
   }
 
-  Php::Value resizeimage(Php::Parameters &params) {
+  void resizeimage(Php::Parameters &params) {
     _checkimageloaded();
 
     /* Blur is ignored */
@@ -990,22 +1001,18 @@ public:
     int img_width = _img.empty()? _header_width : _img.cols;
     int img_height = _img.empty()? _header_height : _img.rows ;
     if (width == img_width && height == img_height) {
-      return true;
+      return;
     }
 
-    if (!_maybedecodeimage()) {
-      return false;
-    }
+    _maybedecodeimage();
 
     _transparencysaferesize(width, height,
         _gmagickfilter2opencvinter(filter, default_filter));
-
-    return true;
   }
 
   /* Documentation is lacking, but scaleimage is resizeimage with
     filter=Gmagick::FILTER_BOX and blur=1.0 */
-  Php::Value scaleimage(Php::Parameters &params) {
+  void scaleimage(Php::Parameters &params) {
     _checkimageloaded();
 
     int width = std::max(1, (int) params[0]);
@@ -1020,19 +1027,15 @@ public:
     int img_width = _img.empty()? _header_width : _img.cols;
     int img_height = _img.empty()? _header_height : _img.rows ;
     if (width == img_width && height == img_height) {
-      return true;
+      return;
     }
 
-    if (!_maybedecodeimage()) {
-      return false;
-    }
+    _maybedecodeimage();
 
     _transparencysaferesize(width, height, cv::INTER_AREA);
-
-    return true;
   }
 
-  Php::Value cropimage(Php::Parameters &params) {
+  void cropimage(Php::Parameters &params) {
     _checkimageloaded();
 
     int x = params[2];
@@ -1055,26 +1058,22 @@ public:
 
     /* Prevent image from being loaded if it's a noop */
     if (!x && !y && x2 == _header_width && y2 == _header_height) {
-      return true;
+      return;
     }
 
-    if (!_maybedecodeimage()) {
-      return false;
-    }
+    _maybedecodeimage();
 
     _img = _img(cv::Rect(x, y, x2-x, y2-y));
-
-    return true;
   }
 
-  Php::Value rotateimage(Php::Parameters &params) {
+  void rotateimage(Php::Parameters &params) {
     _checkimageloaded();
 
     int degrees = params[1];
     int rotation_constant = -1;
     switch (degrees) {
       case 0:
-        return true;
+        return;
 
       case 90:
         rotation_constant = cv::ROTATE_90_CLOCKWISE;
@@ -1089,17 +1088,12 @@ public:
         break;
 
       default:
-        _last_error = "Unsuported rotation angle";
-        return false;
+        throw Php::Exception("Unsupported rotation angle");
     }
 
-    if (!_maybedecodeimage()) {
-      return false;
-    }
+    _maybedecodeimage();
 
     cv::rotate(_img, _img, rotation_constant);
-
-    return true;
   }
 
   Php::Value getimagechanneldepth(Php::Parameters &params) {
@@ -1117,7 +1111,7 @@ public:
     return 8;
   }
 
-  Php::Value borderimage(Php::Parameters &params) {
+  void borderimage(Php::Parameters &params) {
     _checkimageloaded();
 
     std::string hex_color = params[0].stringValue();
@@ -1126,13 +1120,10 @@ public:
     cv::Vec3b bgr_color;
 
     if (!_decodehexcolor(hex_color, bgr_color)) {
-      _last_error = "Invalid color";
-      return false;
+      throw Php::Exception("Unrecognized color string");
     }
 
-    if (!_maybedecodeimage()) {
-      return false;
-    }
+    _maybedecodeimage();
 
     cv::Mat dst(_img.rows + height*2,
       _img.cols + width*2,
@@ -1141,8 +1132,6 @@ public:
 
     _img.copyTo(dst(cv::Rect(width, height, _img.cols, _img.rows)));
     _img = dst;
-
-    return true;
   }
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = nullptr;
