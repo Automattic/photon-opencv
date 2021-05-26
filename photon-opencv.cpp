@@ -5,6 +5,7 @@
 #include <fstream>
 #include <opencv2/opencv.hpp>
 #include <exiv2/exiv2.hpp>
+#include <exiv2/webpimage.hpp>
 #include <lcms2.h>
 #include <zend.h>
 #include <zend_constants.h>
@@ -30,6 +31,8 @@ protected:
   int _header_height;
   int _header_channels;
   Exiv2::Value::AutoPtr _original_orientation;
+
+  const int WEBP_DEFAULT_QUALITY = 75;
 
   static cmsHPROFILE _srgb_profile;
 
@@ -387,6 +390,12 @@ protected:
         _header_channels = _getchannelsfromrawjpg();
         break;
 
+      case Exiv2::ImageType::webp:
+        _format = "webp";
+        _header_channels = _getchannelsfromrawwebp();
+        _compression_quality = _getqualityfromrawwebp();
+        break;
+
       default:
         /* Default to jpeg, but disable lazy loading */
         _format = "jpeg";
@@ -557,6 +566,48 @@ protected:
     return 1 + (color_type & 2? 2 : 0) + (color_type & 4? 1 : 0);
   }
 
+  int _getchannelsfromrawwebp() {
+    if (_raw_image_data.size() < 32) {
+      // Unexpected, default to 3, the most common case
+      return 3;
+    }
+
+    std::string type(_raw_image_data.substr(8, 8));
+    if ("WEBPVP8 " == type) {
+      // Simple webps only support YUV420. OpenCV always decodes to BGR
+      return 3;
+    }
+
+    int alpha_bit = 0;
+    if ("WEBPVP8L" == type) {
+      alpha_bit = _raw_image_data[24] & (1<<4);
+    }
+    else if ("WEBPVP8X" == type) {
+      alpha_bit = _raw_image_data[20] & (1<<4);
+    }
+
+    return alpha_bit? 4 : 3;
+  }
+
+  int _getqualityfromrawwebp() {
+    const int lossless_quality = 101;
+
+    uint8_t *end = (uint8_t *) _raw_image_data.data() + _raw_image_data.size();
+    for (uint8_t *chunk = (uint8_t *) _raw_image_data.data() + 12;
+        chunk <= end - 8;) {
+      if (!strncmp("VP8L", (char *) chunk, 4)) {
+        return lossless_quality;
+      }
+      uint32_t chunk_size = chunk[4]
+        | (chunk[5]<<8)
+        | (chunk[6]<<16)
+        | (chunk[7]<<24);
+      chunk += chunk_size + 8;
+    }
+
+    return WEBP_DEFAULT_QUALITY;
+  }
+
   bool _encodeimage(std::vector<uint8_t> &output_buffer) {
     /* OpenCV strips the profile, we need to apply it first */
     _converttosrgb();
@@ -626,6 +677,10 @@ protected:
       /* OpenCV does not support setting the filters like GMagick,
          instead we get to pick the strategy, so we ignore it
          https://docs.opencv.org/4.1.0/d4/da8/group__imgcodecs.html */
+    }
+    else if ("webp" == _format) {
+      img_parameters.push_back(cv::IMWRITE_WEBP_QUALITY);
+      img_parameters.push_back(_compression_quality);
     }
 
     std::string failure_details;
