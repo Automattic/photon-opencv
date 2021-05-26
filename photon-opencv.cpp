@@ -24,7 +24,7 @@ protected:
   std::string _last_error;
   std::string _format;
   int _type;
-  int _compression_quality = 80;
+  int _compression_quality;
   std::vector<uint8_t> _icc_profile;
   std::string _raw_image_data;
   int _header_width;
@@ -33,6 +33,8 @@ protected:
   Exiv2::Value::AutoPtr _original_orientation;
 
   const int WEBP_DEFAULT_QUALITY = 75;
+  const int JPEG_DEFAULT_QUALITY = 75;
+  const int PNG_DEFAULT_QUALITY = 21;
 
   static cmsHPROFILE _srgb_profile;
 
@@ -383,11 +385,13 @@ protected:
       case Exiv2::ImageType::png:
         _format = "png";
         _header_channels = _getchannelsfromrawpng();
+        _compression_quality = PNG_DEFAULT_QUALITY;
         break;
 
       case Exiv2::ImageType::jpeg:
         _format = "jpeg";
         _header_channels = _getchannelsfromrawjpg();
+        _compression_quality = JPEG_DEFAULT_QUALITY;
         break;
 
       case Exiv2::ImageType::webp:
@@ -401,6 +405,7 @@ protected:
         _format = "jpeg";
         _maybedecodeimage();
         _header_channels = -1;
+        _compression_quality = JPEG_DEFAULT_QUALITY;
         break;
     }
 
