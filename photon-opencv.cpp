@@ -1033,6 +1033,11 @@ public:
     _compression_quality = params[0];
   }
 
+  Php::Value getcompressionquality() {
+    _checkimageloaded();
+    return _compression_quality;
+  }
+
   Php::Value getimagetype() {
     _checkimageloaded();
     return _type;
@@ -1251,6 +1256,7 @@ extern "C" {
     });
     photon_opencv.method<&Photon_OpenCV::getimageblob>("getimageblob");
 
+    // Not in Gmagick
     photon_opencv.method<&Photon_OpenCV::getlasterror>("getlasterror");
 
     photon_opencv.method<&Photon_OpenCV::getimagewidth>("getimagewidth");
@@ -1269,6 +1275,9 @@ extern "C" {
       "setcompressionquality", {
       Php::ByVal("format", Php::Type::String),
     });
+    // Not in Gmagick
+    photon_opencv.method<&Photon_OpenCV::getcompressionquality>(
+      "getcompressionquality");
 
     photon_opencv.method<&Photon_OpenCV::getimagetype>("getimagetype");
     photon_opencv.method<&Photon_OpenCV::setimagetype>("setimagetype");
