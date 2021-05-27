@@ -621,6 +621,13 @@ protected:
     /* OpenCV strips the profile, we need to apply it first */
     _converttosrgb();
 
+    bool lossless_requested = false;
+    auto lossless_option = _image_options.find(_format + ":lossless");
+    if (lossless_option != _image_options.end()
+        && "true" == lossless_option->second) {
+      lossless_requested = true;
+    }
+
     if ("avif" == _format) {
       // Explicit rotation handling and early return, as exiv2 doesn't support
       // the format and libheif provides no way of inseting orientation
@@ -664,7 +671,9 @@ protected:
         }
       }
 
-      bool status = _encodeheifimage(heif_compression_AV1, output_buffer);
+      bool status = _encodeheifimage(heif_compression_AV1,
+          output_buffer,
+          lossless_requested);
 
       if (!original_img.empty()) {
         _img = original_img;
@@ -689,9 +698,7 @@ protected:
     }
     else if ("webp" == _format) {
       img_parameters.push_back(cv::IMWRITE_WEBP_QUALITY);
-      auto lossless_option = _image_options.find("webp:lossless");
-      if (lossless_option != _image_options.end()
-          && "true" == lossless_option->second) {
+      if (lossless_requested) {
         img_parameters.push_back(101);
       }
       else {
@@ -750,7 +757,8 @@ protected:
   }
 
   bool _encodeheifimage(heif_compression_format heif_format,
-      std::vector<uint8_t> &output_buffer) {
+      std::vector<uint8_t> &output_buffer,
+      bool lossless) {
 
     heif_error error;
 
@@ -787,7 +795,7 @@ protected:
       decltype(&heif_nclx_color_profile_free)>
       nclx(nullptr, &heif_nclx_color_profile_free);
 
-    if (_compression_quality > 100) {
+    if (lossless) {
       heif_encoder_set_lossless(encoder.get(), 1);
       heif_encoder_set_parameter(encoder.get(), "chroma", "444");
 
@@ -805,7 +813,7 @@ protected:
     }
     else {
       heif_encoder_set_lossy_quality(encoder.get(),
-          std::max(0, _compression_quality));
+          std::min(std::max(0, _compression_quality), 100));
     }
 
     heif_colorspace colorspace = _img.channels() >= 3?
