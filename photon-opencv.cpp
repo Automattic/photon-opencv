@@ -35,6 +35,7 @@ protected:
   std::map<std::string, std::string> _image_options;
 
   const int WEBP_DEFAULT_QUALITY = 75;
+  const int AVIF_DEFAULT_QUALITY = 75;
   const int JPEG_DEFAULT_QUALITY = 75;
   const int PNG_DEFAULT_QUALITY = 21;
 
@@ -362,6 +363,7 @@ protected:
     _img = cv::Mat();
     _icc_profile.clear();
     _image_options.clear();
+    _compression_quality = -1;
 
     Exiv2::Image::AutoPtr exiv_img;
     try {
@@ -388,19 +390,16 @@ protected:
       case Exiv2::ImageType::png:
         _format = "png";
         _header_channels = _getchannelsfromrawpng();
-        _compression_quality = PNG_DEFAULT_QUALITY;
         break;
 
       case Exiv2::ImageType::jpeg:
         _format = "jpeg";
         _header_channels = _getchannelsfromrawjpg();
-        _compression_quality = JPEG_DEFAULT_QUALITY;
         break;
 
       case Exiv2::ImageType::webp:
         _format = "webp";
         _header_channels = _getchannelsfromrawwebp();
-        _compression_quality = WEBP_DEFAULT_QUALITY;
         if (_israwwebplossless()) {
           _image_options["webp:lossless"] = "true";
         }
@@ -411,7 +410,6 @@ protected:
         _format = "jpeg";
         _maybedecodeimage();
         _header_channels = -1;
-        _compression_quality = JPEG_DEFAULT_QUALITY;
         break;
     }
 
@@ -684,14 +682,18 @@ protected:
 
     std::vector<int> img_parameters;
     if ("jpeg" == _format) {
+      int quality = -1 == _compression_quality?
+        JPEG_DEFAULT_QUALITY : _compression_quality;
       img_parameters.push_back(cv::IMWRITE_JPEG_QUALITY);
-      img_parameters.push_back(_compression_quality);
+      img_parameters.push_back(quality);
     }
     else if ("png" == _format) {
+      int quality = -1 == _compression_quality?
+        PNG_DEFAULT_QUALITY : _compression_quality;
       /* GMagick uses a single scalar for storing two values:
         _compressioN_quality = compression_level*10 + filter_type */
       img_parameters.push_back(cv::IMWRITE_PNG_COMPRESSION);
-      img_parameters.push_back(_compression_quality/10);
+      img_parameters.push_back(quality/10);
       /* OpenCV does not support setting the filters like GMagick,
          instead we get to pick the strategy, so we ignore it
          https://docs.opencv.org/4.1.0/d4/da8/group__imgcodecs.html */
@@ -702,7 +704,9 @@ protected:
         img_parameters.push_back(101);
       }
       else {
-        img_parameters.push_back(_compression_quality);
+        int quality = -1 == _compression_quality?
+          WEBP_DEFAULT_QUALITY : _compression_quality;
+        img_parameters.push_back(quality);
       }
     }
 
@@ -812,8 +816,9 @@ protected:
 
     }
     else {
-      heif_encoder_set_lossy_quality(encoder.get(),
-          std::min(std::max(0, _compression_quality), 100));
+      int quality = -1 == _compression_quality?
+        AVIF_DEFAULT_QUALITY : _compression_quality;
+      heif_encoder_set_lossy_quality(encoder.get(), quality);
     }
 
     heif_colorspace colorspace = _img.channels() >= 3?
@@ -1068,6 +1073,7 @@ public:
 
   void setcompressionquality(Php::Parameters &params) {
     _compression_quality = params[0];
+    _compression_quality = std::min(std::max(0, _compression_quality), 100);
   }
 
   Php::Value getcompressionquality() {
