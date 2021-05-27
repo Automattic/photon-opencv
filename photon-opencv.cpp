@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <iostream>
 #include <fstream>
+#include <map>
 #include <opencv2/opencv.hpp>
 #include <exiv2/exiv2.hpp>
 #include <exiv2/webpimage.hpp>
@@ -31,6 +32,7 @@ protected:
   int _header_height;
   int _header_channels;
   Exiv2::Value::AutoPtr _original_orientation;
+  std::map<std::string, std::string> _image_options;
 
   const int WEBP_DEFAULT_QUALITY = 75;
   const int JPEG_DEFAULT_QUALITY = 75;
@@ -359,6 +361,7 @@ protected:
     /* Clear image in case object is being reused */
     _img = cv::Mat();
     _icc_profile.clear();
+    _image_options.clear();
 
     Exiv2::Image::AutoPtr exiv_img;
     try {
@@ -1029,6 +1032,24 @@ public:
     _format = new_format;
   }
 
+  void setimageoption(Php::Parameters &params) {
+    std::string format = params[0].stringValue();
+    std::transform(format.begin(), format.end(), format.begin(), ::tolower);
+
+    std::string key = params[1].stringValue();
+    std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+
+    std::string value = params[2].stringValue();
+
+    std::string real_key = format + ":" + key;
+    auto option = _image_options.find(real_key);
+    if (option == _image_options.end() || option->second != value) {
+      _maybedecodeimage();
+    }
+
+    _image_options[real_key] = value;
+  }
+
   void setcompressionquality(Php::Parameters &params) {
     _compression_quality = params[0];
   }
@@ -1308,6 +1329,12 @@ extern "C" {
       Php::ByVal("color", Php::Type::String),
       Php::ByVal("width", Php::Type::Numeric),
       Php::ByVal("height", Php::Type::Numeric),
+    });
+
+    photon_opencv.method<&Photon_OpenCV::setimageoption>("setimageoption", {
+      Php::ByVal("format", Php::Type::String),
+      Php::ByVal("key", Php::Type::String),
+      Php::ByVal("value", Php::Type::String),
     });
 
     extension.add(std::move(photon_opencv));
