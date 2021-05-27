@@ -400,7 +400,10 @@ protected:
       case Exiv2::ImageType::webp:
         _format = "webp";
         _header_channels = _getchannelsfromrawwebp();
-        _compression_quality = _getqualityfromrawwebp();
+        _compression_quality = WEBP_DEFAULT_QUALITY;
+        if (_israwwebplossless()) {
+          _image_options["webp:lossless"] = "true";
+        }
         break;
 
       default:
@@ -597,14 +600,12 @@ protected:
     return alpha_bit? 4 : 3;
   }
 
-  int _getqualityfromrawwebp() {
-    const int lossless_quality = 101;
-
+  int _israwwebplossless() {
     uint8_t *end = (uint8_t *) _raw_image_data.data() + _raw_image_data.size();
     for (uint8_t *chunk = (uint8_t *) _raw_image_data.data() + 12;
         chunk <= end - 8;) {
       if (!strncmp("VP8L", (char *) chunk, 4)) {
-        return lossless_quality;
+        return true;
       }
       uint32_t chunk_size = chunk[4]
         | (chunk[5]<<8)
@@ -613,7 +614,7 @@ protected:
       chunk += chunk_size + 8;
     }
 
-    return WEBP_DEFAULT_QUALITY;
+    return false;
   }
 
   bool _encodeimage(std::vector<uint8_t> &output_buffer) {
@@ -688,7 +689,14 @@ protected:
     }
     else if ("webp" == _format) {
       img_parameters.push_back(cv::IMWRITE_WEBP_QUALITY);
-      img_parameters.push_back(_compression_quality);
+      auto lossless_option = _image_options.find("webp:lossless");
+      if (lossless_option != _image_options.end()
+          && "true" == lossless_option->second) {
+        img_parameters.push_back(101);
+      }
+      else {
+        img_parameters.push_back(_compression_quality);
+      }
     }
 
     std::string failure_details;
