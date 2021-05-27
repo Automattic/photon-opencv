@@ -8,8 +8,6 @@
 #include <exiv2/exiv2.hpp>
 #include <exiv2/webpimage.hpp>
 #include <lcms2.h>
-#include <zend.h>
-#include <zend_constants.h>
 #include <libheif/heif.h>
 #include "srgb.icc.h"
 
@@ -191,17 +189,6 @@ protected:
     }
 
     return opencv_filter;
-  }
-
-  /* Workaround for a bug in php-cpp.
-     See https://github.com/CopernicaMarketingSoftware/PHP-CPP/issues/423
-     If this is fixed and removed, it's safe to remove the zend includes */
-  static Php::Value _getconstantex(const char *name) {
-    zend_string *zstr = zend_string_init(name, ::strlen(name), 1);
-    auto result = zend_get_constant_ex(zstr, nullptr, ZEND_FETCH_CLASS_SILENT);
-    zend_string_release(zstr);
-
-    return result;
   }
 
   static void _initialize() {
