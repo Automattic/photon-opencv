@@ -260,11 +260,11 @@ protected:
     }
   }
 
-  void _maybedecodeimage() {
+  bool _maybedecodeimage(bool silent=true) {
     _checkimageloaded();
 
     if (!_img.empty()) {
-      return;
+      return true;
     }
 
     cv::Mat raw_data(1, _raw_image_data.size(), CV_8UC1,
@@ -284,8 +284,15 @@ protected:
         _raw_image_data.size(),
         nullptr);
       if (error.code) {
-        throw Php::Exception(std::string("Failed to read heif context: ")
-            + error.message);
+        std::string message = std::string("Failed to read heif context: ")
+          + error.message;
+
+        if (!silent) {
+          throw Php::Exception(message);
+        }
+
+        _last_error = message;
+        return false;
       }
 
       std::unique_ptr<heif_image_handle,
@@ -296,9 +303,15 @@ protected:
         &raw_handle);
       handle.reset(raw_handle);
       if (error.code) {
-        throw Php::Exception(
-            std::string("Failed to get primary image handle: ")
-            + error.message);
+        std::string message = std::string(
+            "Failed to get primary image handle: ") + error.message;
+
+        if (!silent) {
+          throw Php::Exception(message);
+        }
+
+        _last_error = message;
+        return false;
       }
 
       std::unique_ptr<heif_image, decltype(&heif_image_release)>
@@ -311,8 +324,15 @@ protected:
         nullptr);
       h_image.reset(raw_h_image);
       if (error.code) {
-        throw Php::Exception(std::string("Failed to decode image: ")
-            + error.message);
+        std::string message = std::string("Failed to decode image: ")
+          + error.message;
+
+        if (!silent) {
+          throw Php::Exception(message);
+        }
+
+        _last_error = message;
+        return false;
       }
 
       int stride;
@@ -336,13 +356,21 @@ protected:
         error = heif_image_handle_get_raw_color_profile(handle.get(),
           _icc_profile.data());
         if (error.code) {
-          throw Php::Exception(std::string("Failed to extract color profile: ")
-              + error.message);
+          std::string message = std::string(
+              "Failed to extract color profile: ") + error.message;
+
+          if (!silent) {
+            throw Php::Exception(message);
+          }
+
+          _last_error = message;
+          return false;
         }
       }
     }
 
     _enforce8u();
+    return true;
   }
 
   bool _loadimagefromrawdata() {
@@ -370,7 +398,7 @@ protected:
     catch(Exiv2::Error &error) {
       // Failing to read the metadata is not critical, but it requires us to
       // try to decode the image to get the proper information early
-      _maybedecodeimage();
+      _maybedecodeimage(false);
     }
 
     switch (exiv_img->imageType()) {
@@ -395,7 +423,7 @@ protected:
       default:
         /* Default to jpeg, but disable lazy loading */
         _format = "jpeg";
-        _maybedecodeimage();
+        _maybedecodeimage(false);
         _header_channels = -1;
         break;
     }
@@ -1035,7 +1063,9 @@ public:
       return;
     }
 
-    _maybedecodeimage();
+    if (!_maybedecodeimage()) {
+      return;
+    }
 
     _format = new_format;
   }
@@ -1052,7 +1082,9 @@ public:
     std::string real_key = format + ":" + key;
     auto option = _image_options.find(real_key);
     if (option == _image_options.end() || option->second != value) {
-      _maybedecodeimage();
+      if (!_maybedecodeimage()) {
+        return;
+      }
     }
 
     _image_options[real_key] = value;
@@ -1099,7 +1131,9 @@ public:
       return;
     }
 
-    _maybedecodeimage();
+    if (!_maybedecodeimage()) {
+      return;
+    }
 
     _transparencysaferesize(width, height,
         _gmagickfilter2opencvinter(filter, default_filter));
@@ -1125,7 +1159,9 @@ public:
       return;
     }
 
-    _maybedecodeimage();
+    if (!_maybedecodeimage()) {
+      return;
+    }
 
     _transparencysaferesize(width, height, cv::INTER_AREA);
   }
@@ -1156,7 +1192,9 @@ public:
       return;
     }
 
-    _maybedecodeimage();
+    if (!_maybedecodeimage()) {
+      return;
+    }
 
     _img = _img(cv::Rect(x, y, x2-x, y2-y));
   }
@@ -1186,7 +1224,9 @@ public:
         throw Php::Exception("Unsupported rotation angle");
     }
 
-    _maybedecodeimage();
+    if (!_maybedecodeimage()) {
+      return;
+    }
 
     cv::rotate(_img, _img, rotation_constant);
   }
@@ -1218,7 +1258,9 @@ public:
       throw Php::Exception("Unrecognized color string");
     }
 
-    _maybedecodeimage();
+    if (!_maybedecodeimage()) {
+      return;
+    }
 
     cv::Mat dst(_img.rows + height*2,
       _img.cols + width*2,
