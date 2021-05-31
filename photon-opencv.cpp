@@ -1298,7 +1298,7 @@ const int Photon_OpenCV::IMGTYPE_TRUECOLORMATTE = 7;
 
 extern "C" {
   PHPCPP_EXPORT void *get_module() {
-    static Php::Extension extension("photon-opencv", "0.2.11");
+    static Php::Extension extension("photon-opencv", "0.2.12");
 
     Php::Class<Photon_OpenCV> photon_opencv("Photon_OpenCV");
 
