@@ -6,7 +6,7 @@ CXXFLAGS=-Wall -Wextra -O3 -std=c++17 -fpic \
 LDLIBS=-lphpcpp `pkg-config --libs libheif opencv4 exiv2 lcms2`
 LDFLAGS=-shared
 
-OBJECTS=photon-opencv.o
+OBJECTS=photon-opencv.o tempfile.o
 
 all: photon-opencv.so
 

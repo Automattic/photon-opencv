@@ -9,6 +9,7 @@
 #include <exiv2/webpimage.hpp>
 #include <lcms2.h>
 #include <libheif/heif.h>
+#include "tempfile.h"
 #include "srgb.icc.h"
 
 #define _checkimageloaded() { \
@@ -267,9 +268,15 @@ protected:
       return true;
     }
 
-    cv::Mat raw_data(1, _raw_image_data.size(), CV_8UC1,
-      (void *) _raw_image_data.data());
-    _img = cv::imdecode(raw_data, cv::IMREAD_UNCHANGED);
+    /*
+     * Ideally, we would decode directly from memory. However, opencv is more
+     * strict when imdecode is used. This results in jpegs that are missing
+     * bytes and pngs that have broken exif information to only be parsed by
+     * imread. In order to support more files, we write the files to the
+     * filesystem so that imread can be used.
+    */
+    TempFile temp_image_file(_raw_image_data);
+    _img = cv::imread(temp_image_file.get_path(), cv::IMREAD_UNCHANGED);
 
     if (_img.empty()) {
       // Not supported by OpenCV, try manually with libheif
