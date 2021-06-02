@@ -584,6 +584,7 @@ protected:
     const uint8_t expected_first_bytes[] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a,
         0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52};
     const uint8_t *data = (uint8_t *) _raw_image_data.data();
+    const uint8_t *end = data + _raw_image_data.size();
 
     // Assumes PNG was already validated, minimal confidence checks
     if (_raw_image_data.size() < 32
@@ -594,7 +595,23 @@ protected:
 
     // Palettes will be automatically converted to RGB
     uint8_t color_type = data[sizeof(expected_first_bytes)+9];
-    return 1 + (color_type & 2? 2 : 0) + (color_type & 4? 1 : 0);
+    bool rgb = color_type & 2;
+    if (color_type & 4) {
+      return rgb? 4 : 2;
+    }
+
+    for (const uint8_t *chunk = data + 8; chunk + 8 <= end; ) {
+      if (!strncmp("tRNS", (char *) chunk+4, 4)) {
+        return rgb? 4 : 2;
+      }
+      uint32_t chunk_size = (chunk[0] << 24)
+        | (chunk[1] << 16)
+        | (chunk[2] << 8)
+        | chunk[3];
+      chunk += chunk_size+12;
+    }
+
+    return rgb? 3 : 1;
   }
 
   int _getchannelsfromrawwebp() {
