@@ -321,13 +321,15 @@ protected:
         return false;
       }
 
+      bool has_alpha = heif_image_handle_has_alpha_channel(handle.get());
+
       std::unique_ptr<heif_image, decltype(&heif_image_release)>
         h_image(nullptr, &heif_image_release);
       heif_image *raw_h_image = nullptr;
       error = heif_decode_image(handle.get(),
         &raw_h_image,
         heif_colorspace_RGB,
-        heif_chroma_interleaved_RGB,
+        has_alpha? heif_chroma_interleaved_RGBA : heif_chroma_interleaved_RGB,
         nullptr);
       h_image.reset(raw_h_image);
       if (error.code) {
@@ -348,10 +350,12 @@ protected:
         &stride);
       cv::Mat rgb(heif_image_handle_get_height(handle.get()),
         heif_image_handle_get_width(handle.get()),
-        CV_8UC3,
+        has_alpha? CV_8UC4 : CV_8UC3,
         data,
         stride);
-      cv::cvtColor(rgb, _img, cv::COLOR_RGB2BGR);
+      cv::cvtColor(rgb,
+          _img,
+          has_alpha? cv::COLOR_RGBA2BGRA : cv::COLOR_RGB2BGR);
 
       // This redundand ICC profile extraction code can be removed when
       // exiv2 0.27.4 is released, as it should support the new formats.
