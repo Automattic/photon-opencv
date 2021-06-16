@@ -773,8 +773,10 @@ protected:
       return false;
     }
 
-    /* Manually reinsert orientation exif data */
-    if (_original_orientation.get()) {
+    /* Manually reinsert orientation exif data if it has meaning */
+    long exif_orientation = _original_orientation.get()?
+      _original_orientation.get()->toLong() : 0;
+    if (exif_orientation > 1 && exif_orientation <= 8) {
       Exiv2::Image::AutoPtr exiv_img;
       try {
         exiv_img = Exiv2::ImageFactory::open(output_buffer.data(),
@@ -975,6 +977,17 @@ public:
   static const int IMGTYPE_TRUECOLOR;
   static const int IMGTYPE_TRUECOLORMATTE;
 
+  // These match the exif specs
+  static const int ORIENTATION_UNDEFINED = 0;
+  static const int ORIENTATION_TOPLEFT = 1;
+  static const int ORIENTATION_TOPRIGHT = 2;
+  static const int ORIENTATION_BOTTOMRIGHT = 3;
+  static const int ORIENTATION_BOTTOMLEFT = 4;
+  static const int ORIENTATION_LEFTTOP = 5;
+  static const int ORIENTATION_RIGHTTOP = 6;
+  static const int ORIENTATION_RIGHTBOTTOM = 7;
+  static const int ORIENTATION_LEFTBOTTOM = 8;
+
   Photon_OpenCV() {
     /* Static local intilization is thread safe */
     static std::once_flag initialized;
@@ -1126,6 +1139,65 @@ public:
   Php::Value getcompressionquality() {
     _checkimageloaded();
     return _compression_quality;
+  }
+
+  void autoorientimage(Php::Parameters &params) {
+    _checkimageloaded();
+
+    long orientation = params[0];
+
+    // Orientation follows exif specs, valid values are in [1,8], 0 is undef
+    if (orientation < 0 || orientation > 8) {
+      throw Php::Exception("Invalid orientation requested");
+    }
+
+    if (ORIENTATION_UNDEFINED == orientation) {
+      orientation = _original_orientation.get()?
+        _original_orientation.get()->toLong() : ORIENTATION_TOPLEFT;
+    }
+
+    int rotation;
+    switch (orientation) {
+      case ORIENTATION_BOTTOMRIGHT:
+      case ORIENTATION_BOTTOMLEFT:
+        rotation = cv::ROTATE_180;
+        break;
+
+      case ORIENTATION_LEFTTOP:
+      case ORIENTATION_RIGHTTOP:
+        rotation = cv::ROTATE_90_CLOCKWISE;
+        break;
+
+      case ORIENTATION_RIGHTBOTTOM:
+      case ORIENTATION_LEFTBOTTOM:
+        rotation = cv::ROTATE_90_COUNTERCLOCKWISE;
+        break;
+
+      case ORIENTATION_TOPRIGHT:
+        rotation = -1;
+        break;
+
+      case ORIENTATION_TOPLEFT:
+      default:
+        // noop
+        return;
+    }
+
+    if (!_maybedecodeimage()) {
+      return;
+    }
+
+    if (-1 != rotation) {
+      cv::rotate(_img, _img, rotation);
+    }
+    if (ORIENTATION_TOPRIGHT == orientation
+        || ORIENTATION_BOTTOMLEFT == orientation
+        || ORIENTATION_LEFTTOP == orientation
+        || ORIENTATION_RIGHTBOTTOM == orientation) {
+      cv::flip(_img, _img, 1);
+    }
+
+    // Exif not reset intentionally, GraphicsMagick doesn't support it for Jpeg
   }
 
   Php::Value getimagetype() {
@@ -1344,6 +1416,24 @@ extern "C" {
         Photon_OpenCV::IMGTYPE_TRUECOLOR);
     photon_opencv.constant("IMGTYPE_TRUECOLORMATTE",
         Photon_OpenCV::IMGTYPE_TRUECOLORMATTE);
+    photon_opencv.constant("ORIENTATION_UNDEFINED",
+        Photon_OpenCV::ORIENTATION_UNDEFINED);
+    photon_opencv.constant("ORIENTATION_TOPLEFT",
+        Photon_OpenCV::ORIENTATION_TOPLEFT);
+    photon_opencv.constant("ORIENTATION_TOPRIGHT",
+        Photon_OpenCV::ORIENTATION_TOPRIGHT);
+    photon_opencv.constant("ORIENTATION_BOTTOMRIGHT",
+        Photon_OpenCV::ORIENTATION_BOTTOMRIGHT);
+    photon_opencv.constant("ORIENTATION_BOTTOMLEFT",
+        Photon_OpenCV::ORIENTATION_BOTTOMLEFT);
+    photon_opencv.constant("ORIENTATION_LEFTTOP",
+        Photon_OpenCV::ORIENTATION_LEFTTOP);
+    photon_opencv.constant("ORIENTATION_RIGHTTOP",
+        Photon_OpenCV::ORIENTATION_RIGHTTOP);
+    photon_opencv.constant("ORIENTATION_RIGHTBOTTOM",
+        Photon_OpenCV::ORIENTATION_RIGHTBOTTOM);
+    photon_opencv.constant("ORIENTATION_LEFTBOTTOM",
+        Photon_OpenCV::ORIENTATION_LEFTBOTTOM);
 
     photon_opencv.method<&Photon_OpenCV::readimageblob>("readimageblob", {
       Php::ByRef("raw_image_data", Php::Type::String),
@@ -1378,6 +1468,11 @@ extern "C" {
     // Not in Gmagick
     photon_opencv.method<&Photon_OpenCV::getcompressionquality>(
       "getcompressionquality");
+
+    // Not in Gmagick, but in GraphicsMagick
+    photon_opencv.method<&Photon_OpenCV::autoorientimage>("autoorientimage", {
+      Php::ByVal("current_orientation", Php::Type::Numeric),
+    });
 
     photon_opencv.method<&Photon_OpenCV::getimagetype>("getimagetype");
     photon_opencv.method<&Photon_OpenCV::setimagetype>("setimagetype");
