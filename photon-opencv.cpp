@@ -962,20 +962,20 @@ protected:
 
 public:
   /* Gmagick constant replacements */
-  static const int CHANNEL_OPACITY;
-  static const int COLORSPACE_RGB;
-  static const int FILTER_LANCZOS;
-  static const int FILTER_CUBIC;
-  static const int FILTER_TRIANGLE;
-  static const int FILTER_POINT;
-  static const int FILTER_BOX;
-  static const int IMGTYPE_COLORSEPARATIONMATTE;
-  static const int IMGTYPE_GRAYSCALE;
-  static const int IMGTYPE_GRAYSCALEMATTE;
-  static const int IMGTYPE_PALETTE;
-  static const int IMGTYPE_PALETTEMATTE;
-  static const int IMGTYPE_TRUECOLOR;
-  static const int IMGTYPE_TRUECOLORMATTE;
+  static const int CHANNEL_OPACITY = 7;
+  static const int COLORSPACE_RGB = 1;
+  static const int FILTER_LANCZOS = 13;
+  static const int FILTER_CUBIC = 10;
+  static const int FILTER_TRIANGLE = 3;
+  static const int FILTER_POINT = 1;
+  static const int FILTER_BOX = 2;
+  static const int IMGTYPE_COLORSEPARATIONMATTE = 9;
+  static const int IMGTYPE_GRAYSCALE = 2;
+  static const int IMGTYPE_GRAYSCALEMATTE = 3;
+  static const int IMGTYPE_PALETTE = 4;
+  static const int IMGTYPE_PALETTEMATTE = 5;
+  static const int IMGTYPE_TRUECOLOR = 6;
+  static const int IMGTYPE_TRUECOLORMATTE = 7;
 
   // These match the exif specs
   static const int ORIENTATION_UNDEFINED = 0;
@@ -1373,21 +1373,6 @@ public:
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = nullptr;
 const heif_encoder_descriptor *Photon_OpenCV::_aom_descriptor = nullptr;
-
-const int Photon_OpenCV::CHANNEL_OPACITY = 7;
-const int Photon_OpenCV::COLORSPACE_RGB = 1;
-const int Photon_OpenCV::FILTER_LANCZOS = 13;
-const int Photon_OpenCV::FILTER_CUBIC = 10;
-const int Photon_OpenCV::FILTER_TRIANGLE = 3;
-const int Photon_OpenCV::FILTER_POINT = 1;
-const int Photon_OpenCV::FILTER_BOX = 2;
-const int Photon_OpenCV::IMGTYPE_COLORSEPARATIONMATTE = 9;
-const int Photon_OpenCV::IMGTYPE_GRAYSCALE = 2;
-const int Photon_OpenCV::IMGTYPE_GRAYSCALEMATTE = 3;
-const int Photon_OpenCV::IMGTYPE_PALETTE = 4;
-const int Photon_OpenCV::IMGTYPE_PALETTEMATTE = 5;
-const int Photon_OpenCV::IMGTYPE_TRUECOLOR = 6;
-const int Photon_OpenCV::IMGTYPE_TRUECOLORMATTE = 7;
 
 extern "C" {
   PHPCPP_EXPORT void *get_module() {
