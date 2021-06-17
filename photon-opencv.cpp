@@ -1200,6 +1200,35 @@ public:
     // Exif not reset intentionally, GraphicsMagick doesn't support it for Jpeg
   }
 
+  void setimageprofile(Php::Parameters &params) {
+    std::string name = params[0].stringValue();
+    std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+
+    if (!_maybedecodeimage()) {
+      return;
+    }
+
+    if ("exif" == name) {
+      if (!params[1].isNull()) {
+        throw Php::Exception("Exif replacement unimplemented, only removal");
+      }
+      _original_orientation.release();
+    }
+    else if ("icc" == name) {
+      if (params[1].isNull()) {
+        _icc_profile.clear();
+      }
+      else {
+        std::string new_icc = params[1].stringValue();
+        _icc_profile.resize(new_icc.size());
+        memcpy(_icc_profile.data(), new_icc.data(), _icc_profile.size());
+      }
+    }
+    else {
+      throw Php::Exception("Tried to modify unsupported profile");
+    }
+  }
+
   Php::Value getimagetype() {
     _checkimageloaded();
     return _type;
@@ -1457,6 +1486,12 @@ extern "C" {
     // Not in Gmagick, but in GraphicsMagick
     photon_opencv.method<&Photon_OpenCV::autoorientimage>("autoorientimage", {
       Php::ByVal("current_orientation", Php::Type::Numeric),
+    });
+
+    photon_opencv.method<&Photon_OpenCV::setimageprofile>(
+      "setimageprofile", {
+      Php::ByVal("name", Php::Type::String),
+      Php::ByVal("profile", Php::Type::Null),
     });
 
     photon_opencv.method<&Photon_OpenCV::getimagetype>("getimagetype");
