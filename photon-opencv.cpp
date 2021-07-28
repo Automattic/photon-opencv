@@ -20,7 +20,7 @@
 
 class Photon_OpenCV : public Php::Base {
 protected:
-  cv::Mat _img;
+  std::vector<cv::Mat> _imgs;
   std::string _last_error;
   std::string _format;
   int _type;
@@ -43,11 +43,11 @@ protected:
   static const heif_encoder_descriptor *_aom_descriptor;
 
   void _enforce8u() {
-    if (CV_8U != _img.depth()) {
+    if (CV_8U != _imgs[0].depth()) {
       /* Proper convertion is mostly guess work, but it's fairly rare and
          these are reasonable assumptions */
       double alpha, beta;
-      switch (_img.depth()) {
+      switch (_imgs[0].depth()) {
         case CV_16U:
           alpha = 1./256;
           beta = 0;
@@ -68,7 +68,10 @@ protected:
           beta = 0;
           break;
       }
-      _img.convertTo(_img, CV_8U, alpha, beta);
+
+      for (auto &img : _imgs) {
+        img.convertTo(img, CV_8U, alpha, beta);
+      }
     }
   }
 
@@ -87,7 +90,7 @@ protected:
 
     int storage_format;
     int num_intensity_channels;
-    switch (_img.channels()) {
+    switch (_imgs[0].channels()) {
       case 1:
       case 2:
         storage_format = TYPE_GRAY_8;
@@ -123,42 +126,47 @@ protected:
 
     /* Alpha optimizations using `reshape()` require continuous data.
        If necessary, this can be optimized out for images without alpha */
-    if (!_img.isContinuous()) {
-      _img = _img.clone();
+    for (auto &img : _imgs) {
+      if (!img.isContinuous()) {
+        img = img.clone();
+      }
     }
 
     int output_type = _imagehasalpha()? CV_8UC4 : CV_8UC3;
-    cv::Mat transformed_img = cv::Mat(_img.rows, _img.cols, output_type);
+    for (auto &img : _imgs) {
+      cv::Mat transformed_img = cv::Mat(img.rows, img.cols, output_type);
 
-    /* The sRGB profile can't handle the alpha channel. We make sure it's
-       skipped when applying the profile */
-    cv::Mat no_alpha_img = _img.
-      reshape(1, _img.rows*_img.cols).
-      colRange(0, num_intensity_channels);
-    cv::Mat no_alpha_transformed_img = transformed_img.
-      reshape(1, transformed_img.rows*transformed_img.cols).
-      colRange(0, 3);
-
-    cmsDoTransformLineStride(
-        transform,
-        no_alpha_img.data, no_alpha_transformed_img.data,
-        no_alpha_img.cols/num_intensity_channels, no_alpha_img.rows,
-        no_alpha_img.step, no_alpha_transformed_img.step,
-        0, 0
-    );
-    cmsDeleteTransform(transform);
-
-    if (_imagehasalpha()) {
-      /* Copy the original alpha information */
-      cv::Mat alpha_only_img = _img.reshape(1, _img.rows*_img.cols).
-        colRange(num_intensity_channels, num_intensity_channels+1);
-      cv::Mat alpha_only_transformed_img = transformed_img.
+      /* The sRGB profile can't handle the alpha channel. We make sure it's
+         skipped when applying the profile */
+      cv::Mat no_alpha_img = img.
+        reshape(1, img.rows*img.cols).
+        colRange(0, num_intensity_channels);
+      cv::Mat no_alpha_transformed_img = transformed_img.
         reshape(1, transformed_img.rows*transformed_img.cols).
-        colRange(3, 4);
-      alpha_only_img.copyTo(alpha_only_transformed_img);
+        colRange(0, 3);
+
+      cmsDoTransformLineStride(
+          transform,
+          no_alpha_img.data, no_alpha_transformed_img.data,
+          no_alpha_img.cols/num_intensity_channels, no_alpha_img.rows,
+          no_alpha_img.step, no_alpha_transformed_img.step,
+          0, 0
+      );
+      cmsDeleteTransform(transform);
+
+      if (_imagehasalpha()) {
+        /* Copy the original alpha information */
+        cv::Mat alpha_only_img = img.reshape(1, img.rows*img.cols).
+          colRange(num_intensity_channels, num_intensity_channels+1);
+        cv::Mat alpha_only_transformed_img = transformed_img.
+          reshape(1, transformed_img.rows*transformed_img.cols).
+          colRange(3, 4);
+        alpha_only_img.copyTo(alpha_only_transformed_img);
+      }
+
+      img = transformed_img;
     }
 
-    _img = transformed_img;
     _icc_profile.clear();
 
     return true;
@@ -213,41 +221,45 @@ protected:
 
   bool _imagehasalpha() {
     /* Even number of channels means it's either GA or BGRA */
-    int num_channels = _img.empty()? _header_channels : _img.channels();
+    int num_channels = _imgs.empty()? _header_channels : _imgs[0].channels();
     return !(num_channels & 1);
   }
 
   /* Assumes alpha is the last channel */
   void _associatealpha() {
-    /* Continuity required for `reshape()` */
-    if (!_img.isContinuous()) {
-      _img = _img.clone();
-    }
+    for (auto &img : _imgs) {
+      /* Continuity required for `reshape()` */
+      if (!img.isContinuous()) {
+        img = img.clone();
+      }
 
-    int alpha_channel = _img.channels()-1;
-    cv::Mat alpha = _img.reshape(1, _img.rows*_img.cols).
-      colRange(alpha_channel, alpha_channel+1);
+      int alpha_channel = img.channels()-1;
+      cv::Mat alpha = img.reshape(1, img.rows*img.cols).
+        colRange(alpha_channel, alpha_channel+1);
 
-    for (int i = 0; i < alpha_channel; i++) {
-      cv::Mat color = _img.reshape(1, _img.rows*_img.cols).colRange(i, i+1);
-      cv::multiply(color, alpha, color, 1./255);
+      for (int i = 0; i < alpha_channel; i++) {
+        cv::Mat color = img.reshape(1, img.rows*img.cols).colRange(i, i+1);
+        cv::multiply(color, alpha, color, 1./255);
+      }
     }
   }
 
   /* Assumes alpha is the last channel */
   void _dissociatealpha() {
-    /* Continuity required for `reshape()` */
-    if (!_img.isContinuous()) {
-      _img = _img.clone();
-    }
+    for (auto &img : _imgs) {
+      /* Continuity required for `reshape()` */
+      if (!img.isContinuous()) {
+        img = img.clone();
+      }
 
-    int alpha_channel = _img.channels()-1;
-    cv::Mat alpha = _img.reshape(1, _img.rows*_img.cols).
-      colRange(alpha_channel, alpha_channel+1);
+      int alpha_channel = img.channels()-1;
+      cv::Mat alpha = img.reshape(1, img.rows*img.cols).
+        colRange(alpha_channel, alpha_channel+1);
 
-    for (int i = 0; i < alpha_channel; i++) {
-      cv::Mat color = _img.reshape(1, _img.rows*_img.cols).colRange(i, i+1);
-      cv::divide(color, alpha, color, 255.);
+      for (int i = 0; i < alpha_channel; i++) {
+        cv::Mat color = img.reshape(1, img.rows*img.cols).colRange(i, i+1);
+        cv::divide(color, alpha, color, 255.);
+      }
     }
   }
 
@@ -255,7 +267,11 @@ protected:
     if (_imagehasalpha()) {
       _associatealpha();
     }
-    cv::resize(_img, _img, cv::Size(width, height), 0, 0, filter);
+
+    for (auto &img : _imgs) {
+      cv::resize(img, img, cv::Size(width, height), 0, 0, filter);
+    }
+
     if (_imagehasalpha()) {
       _dissociatealpha();
     }
@@ -264,7 +280,7 @@ protected:
   bool _maybedecodeimage(bool silent=true) {
     _checkimageloaded();
 
-    if (!_img.empty()) {
+    if (!_imgs.empty()) {
       return true;
     }
 
@@ -276,9 +292,12 @@ protected:
      * filesystem so that imread can be used.
     */
     TempFile temp_image_file(_raw_image_data);
-    _img = cv::imread(temp_image_file.get_path(), cv::IMREAD_UNCHANGED);
+    cv::Mat img = cv::imread(temp_image_file.get_path(), cv::IMREAD_UNCHANGED);
+    if (!img.empty()) {
+      _imgs.push_back(img);
+    }
 
-    if (_img.empty()) {
+    if (_imgs.empty()) {
       // Not supported by OpenCV, try manually with libheif
 
       std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
@@ -354,8 +373,9 @@ protected:
         data,
         stride);
       cv::cvtColor(rgb,
-          _img,
+          img,
           has_alpha? cv::COLOR_RGBA2BGRA : cv::COLOR_RGB2BGR);
+      _imgs.push_back(img);
 
       // This redundand ICC profile extraction code can be removed when
       // exiv2 0.27.4 is released, as it should support the new formats.
@@ -386,7 +406,7 @@ protected:
 
   bool _loadimagefromrawdata() {
     /* Clear image in case object is being reused */
-    _img = cv::Mat();
+    _imgs.clear();
     _icc_profile.clear();
     _image_options.clear();
     _compression_quality = -1;
@@ -458,7 +478,7 @@ protected:
     }
 
     /* Palettes are automatically converted to RGB on decode */
-    switch (_img.empty()? _header_channels : _img.channels()) {
+    switch (_imgs.empty()? _header_channels : _imgs[0].channels()) {
       case 1:
         _type = IMGTYPE_GRAYSCALE;
         break;
@@ -525,7 +545,7 @@ protected:
     cv::Vec4b color;
 
     // Assumes 1 byte per channel
-    if (_img.channels() <= 2) {
+    if (_imgs[0].channels() <= 2) {
       color[0] = round(
           bgr_color[0]*.114 + bgr_color[1]*.587 + bgr_color[2]*.299);
       color[1] = 255;
@@ -541,8 +561,8 @@ protected:
   }
 
   void _forceaspectratio(int &width, int &height) {
-    int img_width = _img.empty()? _header_width : _img.cols;
-    int img_height = _img.empty()? _header_height : _img.rows ;
+    int img_width = _imgs.empty()? _header_width : _imgs[0].cols;
+    int img_height = _imgs.empty()? _header_height : _imgs[0].rows ;
 
     double img_ratio = (double) img_width / (double) img_height;
     double new_ratio = (double) width / (double) height;
@@ -700,15 +720,15 @@ protected:
             break;
         }
 
-        _img.copyTo(original_img);
+        _imgs[0].copyTo(original_img);
         if (rotation != -1) {
-          cv::rotate(_img, _img, rotation);
+          cv::rotate(_imgs[0], _imgs[0], rotation);
         }
         if (2 == orientation
             || 4 == orientation
             || 5 == orientation
             || 7 == orientation) {
-          cv::flip(_img, _img, 1);
+          cv::flip(_imgs[0], _imgs[0], 1);
         }
       }
 
@@ -717,7 +737,7 @@ protected:
           lossless_requested);
 
       if (!original_img.empty()) {
-        _img = original_img;
+        _imgs[0] = original_img;
       }
 
       return status;
@@ -757,7 +777,7 @@ protected:
     bool encoded = false;
     try {
       encoded = cv::imencode("." + _format,
-          _img,
+          _imgs[0],
           output_buffer,
           img_parameters);
     }
@@ -866,9 +886,9 @@ protected:
       heif_encoder_set_lossy_quality(encoder.get(), quality);
     }
 
-    heif_colorspace colorspace = _img.channels() >= 3?
+    heif_colorspace colorspace = _imgs[0].channels() >= 3?
       heif_colorspace_RGB : heif_colorspace_monochrome;
-    heif_chroma chroma = _img.channels() >= 3?
+    heif_chroma chroma = _imgs[0].channels() >= 3?
       heif_chroma_444 : heif_chroma_monochrome;
 
     heif_channel channel_map[][4] = {
@@ -882,8 +902,8 @@ protected:
       nullptr,
       &heif_image_release);
     heif_image *raw_image;
-    error = heif_image_create(_img.cols,
-        _img.rows,
+    error = heif_image_create(_imgs[0].cols,
+        _imgs[0].rows,
         colorspace,
         chroma,
         &raw_image);
@@ -895,13 +915,13 @@ protected:
     }
 
     std::vector<cv::Mat> channel_mats;
-    for (int i = 0; i < _img.channels(); i++) {
-      heif_channel channel_type = channel_map[_img.channels()-1][i];
+    for (int i = 0; i < _imgs[0].channels(); i++) {
+      heif_channel channel_type = channel_map[_imgs[0].channels()-1][i];
 
       error = heif_image_add_plane(image.get(),
           channel_type,
-          _img.cols,
-          _img.rows,
+          _imgs[0].cols,
+          _imgs[0].rows,
           8);
       if (error.code != heif_error_Ok) {
         _last_error = "Heif plane addition: "
@@ -911,16 +931,20 @@ protected:
 
       int stride;
       uint8_t *data = heif_image_get_plane(image.get(), channel_type, &stride);
-      channel_mats.emplace_back(_img.rows, _img.cols, CV_8UC1, data, stride);
+      channel_mats.emplace_back(_imgs[0].rows,
+          _imgs[0].cols,
+          CV_8UC1,
+          data,
+          stride);
     }
 
     int trivial_fromto[] = {0, 0, 1, 1, 2, 2, 3, 3};
-    cv::mixChannels(&_img,
+    cv::mixChannels(&_imgs[0],
         1,
         channel_mats.data(),
         channel_mats.size(),
         trivial_fromto,
-        _img.channels());
+        _imgs[0].channels());
 
     error = heif_context_encode_image(context.get(),
         image.get(),
@@ -1035,7 +1059,7 @@ public:
     }
 
     // No ops, we can return the original image
-    if (_img.empty()) {
+    if (_imgs.empty()) {
       std::ofstream output(output_path,
           std::ios::out | std::ios::binary);
       output << _raw_image_data;
@@ -1063,7 +1087,7 @@ public:
     _checkimageloaded();
 
     // No ops, we can return the original image
-    if (_img.empty()) {
+    if (_imgs.empty()) {
       return _raw_image_data;
     }
 
@@ -1082,12 +1106,12 @@ public:
   Php::Value getimagewidth() {
     _checkimageloaded();
 
-    return (_img.empty()? _header_width : _img.cols);
+    return (_imgs.empty()? _header_width : _imgs[0].cols);
   }
 
   Php::Value getimageheight() {
     _checkimageloaded();
-    return (_img.empty()? _header_height : _img.rows);
+    return (_imgs.empty()? _header_height : _imgs[0].rows);
   }
 
   Php::Value getimageformat() {
@@ -1188,13 +1212,17 @@ public:
     }
 
     if (-1 != rotation) {
-      cv::rotate(_img, _img, rotation);
+      for (auto &img : _imgs) {
+        cv::rotate(img, img, rotation);
+      }
     }
     if (ORIENTATION_TOPRIGHT == orientation
         || ORIENTATION_BOTTOMLEFT == orientation
         || ORIENTATION_LEFTTOP == orientation
         || ORIENTATION_RIGHTBOTTOM == orientation) {
-      cv::flip(_img, _img, 1);
+      for (auto &img : _imgs) {
+        cv::flip(img, img, 1);
+      }
     }
 
     // Exif not reset intentionally, GraphicsMagick doesn't support it for Jpeg
@@ -1254,8 +1282,8 @@ public:
     }
 
     /* Explicitly skip if it's a noop. */
-    int img_width = _img.empty()? _header_width : _img.cols;
-    int img_height = _img.empty()? _header_height : _img.rows ;
+    int img_width = _imgs.empty()? _header_width : _imgs[0].cols;
+    int img_height = _imgs.empty()? _header_height : _imgs[0].rows ;
     if (width == img_width && height == img_height) {
       return;
     }
@@ -1282,8 +1310,8 @@ public:
     }
 
     /* Explicitly skip if it's a noop. */
-    int img_width = _img.empty()? _header_width : _img.cols;
-    int img_height = _img.empty()? _header_height : _img.rows ;
+    int img_width = _imgs.empty()? _header_width : _imgs[0].cols;
+    int img_height = _imgs.empty()? _header_height : _imgs[0].rows ;
     if (width == img_width && height == img_height) {
       return;
     }
@@ -1309,8 +1337,8 @@ public:
       std::swap(y, y2);
     }
 
-    int width = _img.empty()? _header_width : _img.cols;
-    int height = _img.empty()? _header_height : _img.rows ;
+    int width = _imgs.empty()? _header_width : _imgs[0].cols;
+    int height = _imgs.empty()? _header_height : _imgs[0].rows ;
     x = std::max(0, std::min(x, width));
     y = std::max(0, std::min(y, height));
     x2 = std::max(0, std::min(x2, width));
@@ -1325,7 +1353,9 @@ public:
       return;
     }
 
-    _img = _img(cv::Rect(x, y, x2-x, y2-y));
+    for (auto &img : _imgs) {
+      img = img(cv::Rect(x, y, x2-x, y2-y));
+    }
   }
 
   void rotateimage(Php::Parameters &params) {
@@ -1357,7 +1387,9 @@ public:
       return;
     }
 
-    cv::rotate(_img, _img, rotation_constant);
+    for (auto &img : _imgs) {
+      cv::rotate(img, img, rotation_constant);
+    }
   }
 
   Php::Value getimagechanneldepth(Php::Parameters &params) {
@@ -1391,13 +1423,15 @@ public:
       return;
     }
 
-    cv::Mat dst(_img.rows + height*2,
-      _img.cols + width*2,
-      _img.type(),
-      _bgrtoloadedimagetype(bgr_color));
+    for (auto &img : _imgs) {
+      cv::Mat dst(img.rows + height*2,
+        img.cols + width*2,
+        img.type(),
+        _bgrtoloadedimagetype(bgr_color));
 
-    _img.copyTo(dst(cv::Rect(width, height, _img.cols, _img.rows)));
-    _img = dst;
+      img.copyTo(dst(cv::Rect(width, height, img.cols, img.rows)));
+      img = dst;
+    }
   }
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = nullptr;
