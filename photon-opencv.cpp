@@ -9,6 +9,11 @@
 #include <exiv2/webpimage.hpp>
 #include <lcms2.h>
 #include <libheif/heif.h>
+#include <gif_lib.h>
+#define MSF_USE_ALPHA
+#define MSF_GIF_BGR
+#define MSF_GIF_IMPL
+#include <msf_gif.h>
 #include "tempfile.h"
 #include "srgb.icc.h"
 
@@ -21,6 +26,7 @@
 class Photon_OpenCV : public Php::Base {
 protected:
   std::vector<cv::Mat> _imgs;
+  std::vector<int> _delays;
   std::string _last_error;
   std::string _format;
   int _type;
@@ -277,6 +283,182 @@ protected:
     }
   }
 
+  bool _maybedecodewithgiflib(bool silent) {
+    std::unique_ptr<GifFileType, void (*) (GifFileType *)> gif(nullptr,
+        [] (GifFileType *gif) {
+          DGifCloseFile(gif, nullptr);
+        });
+
+    int error = GIF_OK;
+    std::pair<int, const std::string *> offset_and_data(0, &_raw_image_data);
+    GifFileType *raw_gif = DGifOpen(&offset_and_data,
+        [] (GifFileType *gif, GifByteType *buffer, int size) {
+          std::pair<int, const std::string *> *user =
+            (std::pair<int, const std::string *> *) gif->UserData;
+          int offset = user->first;
+          const std::string *data = user->second;
+          int reading = std::min(size, (int) data->size() - offset);
+          if (reading <= 0) {
+            return 0;
+          }
+          memcpy(buffer, data->data() + offset, reading);
+          user->first += reading;
+          return reading;
+        },
+        &error);
+
+    if (GIF_OK != error) {
+      // Return true so other formats can be tried
+      return true;
+    }
+    gif.reset(raw_gif);
+
+    if (GIF_OK != DGifSlurp(gif.get()) ) {
+      // Return true so other formats can be tried
+      return true;
+    }
+
+    // Browsers ignore the background color and use transparent instead
+    cv::Vec4b bg_scalar(0, 0, 0, 0);
+
+    std::vector<GraphicsControlBlock> gcbs(gif->ImageCount);
+    for (int i = 0; i < gif->ImageCount; i++) {
+      // If no gcb is found, default values are returned
+      DGifSavedExtensionToGCB(gif.get(), i, &gcbs[i]);
+
+      const auto &desc = gif->SavedImages[i].ImageDesc;
+      if (desc.Width + desc.Left > gif->SWidth
+          || desc.Height + desc.Top > gif->SHeight
+          || desc.Width <= 0
+          || desc.Height <= 0
+          || desc.Left < 0
+          || desc.Top < 0 ) {
+
+        _delays.clear();
+        _imgs.clear();
+
+        std::string message = "Invalid description ("
+          + std::to_string(desc.Left) + ", "
+          + std::to_string(desc.Top) + ", "
+          + std::to_string(desc.Width) + ", "
+          + std::to_string(desc.Height) + ") for frame "
+          + std::to_string(i);
+
+        if (!silent) {
+          throw Php::Exception(message);
+        }
+
+        _last_error = message;
+        return false;
+      }
+    }
+
+    bool has_alpha = _header_channels == 4;
+
+    if (gif->SColorMap
+        && gif->SBackGroundColor >= gif->SColorMap->ColorCount) {
+      std::string message = "Invalid background color index "
+        + std::to_string(gif->SBackGroundColor);
+
+      if (!silent) {
+        throw Php::Exception(message);
+      }
+
+      _last_error = message;
+      return false;
+    }
+
+
+    cv::Mat previous_cache;
+    for (int i = 0; i < gif->ImageCount; i++) {
+      // Description already validated
+      const auto &desc = gif->SavedImages[i].ImageDesc;
+
+      cv::Mat img;
+      if (0 == i) {
+        img = cv::Mat(gif->SHeight,
+            gif->SWidth,
+            has_alpha? CV_8UC4 : CV_8UC3,
+            bg_scalar);
+        img.copyTo(previous_cache);
+      }
+      else {
+        if (gcbs[i-1].DisposalMode == DISPOSE_BACKGROUND) {
+          _imgs.back().copyTo(img);
+          const auto &p_desc = gif->SavedImages[i-1].ImageDesc;
+          cv::rectangle(img,
+              cv::Rect(p_desc.Left, p_desc.Top, p_desc.Width, p_desc.Height),
+              bg_scalar,
+              -1);
+          img.copyTo(previous_cache);
+        }
+        else if (gcbs[i-1].DisposalMode == DISPOSE_PREVIOUS) {
+          previous_cache.copyTo(img);
+        }
+        else {
+          _imgs.back().copyTo(img);
+          img.copyTo(previous_cache);
+        }
+      }
+
+      cv::Mat roi(img, cv::Rect(desc.Left, desc.Top, desc.Width, desc.Height));
+      auto *color_map = desc.ColorMap? desc.ColorMap : gif->SColorMap;
+      if (!color_map) {
+        _delays.clear();
+        _imgs.clear();
+
+        std::string message = "Invalid color map for frame"
+          + std::to_string(i);
+
+        if (!silent) {
+          throw Php::Exception(message);
+        }
+
+        _last_error = message;
+        return false;
+      }
+
+      int n = 0;
+      for (int y = 0; y < roi.rows; y++) {
+        for (int x = 0; x < roi.cols; x++) {
+          int ci = gif->SavedImages[i].RasterBits[n++];
+          if (ci >= color_map->ColorCount) {
+            _delays.clear();
+            _imgs.clear();
+
+            std::string message = "Invalid color index " + std::to_string(ci)
+              + " in frame " + std::to_string(i);
+
+            if (!silent) {
+              throw Php::Exception(message);
+            }
+
+            _last_error = message;
+            return false;
+          }
+
+          if (ci == gcbs[i].TransparentColor) {
+            continue;
+          }
+
+          auto c = color_map->Colors[ci];
+          if (has_alpha) {
+            roi.at<cv::Vec4b>(y, x) = cv::Vec4b(c.Blue, c.Green, c.Red, 255);
+          }
+          else {
+            roi.at<cv::Vec3b>(y, x) = cv::Vec3b(c.Blue, c.Green, c.Red);
+          }
+        }
+      }
+
+      _imgs.push_back(img);
+      // Convert to milliseconds
+      _delays.push_back(gcbs[i].DelayTime * 10);
+    }
+
+    return true;
+  }
+
   bool _maybedecodeimage(bool silent=true) {
     _checkimageloaded();
 
@@ -295,10 +477,18 @@ protected:
     cv::Mat img = cv::imread(temp_image_file.get_path(), cv::IMREAD_UNCHANGED);
     if (!img.empty()) {
       _imgs.push_back(img);
+      _delays.push_back(0);
     }
 
     if (_imgs.empty()) {
-      // Not supported by OpenCV, try manually with libheif
+      // Not a static image, try giflib
+      if (!_maybedecodewithgiflib(silent)) {
+        return false;
+      }
+    }
+
+    if (_imgs.empty()) {
+      // Not supported by OpenCV or giflib, try libheif
 
       std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
         heif_context_alloc(), &heif_context_free);
@@ -376,6 +566,7 @@ protected:
           img,
           has_alpha? cv::COLOR_RGBA2BGRA : cv::COLOR_RGB2BGR);
       _imgs.push_back(img);
+      _delays.push_back(0);
 
       // This redundand ICC profile extraction code can be removed when
       // exiv2 0.27.4 is released, as it should support the new formats.
@@ -407,6 +598,7 @@ protected:
   bool _loadimagefromrawdata() {
     /* Clear image in case object is being reused */
     _imgs.clear();
+    _delays.clear();
     _icc_profile.clear();
     _image_options.clear();
     _compression_quality = -1;
@@ -449,6 +641,11 @@ protected:
         if (_israwwebplossless()) {
           _image_options["webp:lossless"] = "true";
         }
+        break;
+
+      case Exiv2::ImageType::gif:
+        _format = "gif";
+        _header_channels = _getchannelsfromrawgif();
         break;
 
       default:
@@ -604,6 +801,12 @@ protected:
     return data[o+9] == 1? 1 : 3;
   }
 
+  int _getchannelsfromrawgif() {
+    // Determining the number of channels requires decoding and rendering all
+    // graphics. Possible values are 3 and 4, and we default to 4
+    return 4;
+  }
+
   int _getchannelsfromrawpng() {
     const uint8_t expected_first_bytes[] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a,
         0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52};
@@ -743,6 +946,10 @@ protected:
       return status;
     }
 
+    if ("gif" == _format) {
+      return _encodegifimage(output_buffer);
+    }
+
     std::vector<int> img_parameters;
     if ("jpeg" == _format) {
       int quality = -1 == _compression_quality?
@@ -823,6 +1030,71 @@ protected:
     }
 
     return true;
+  }
+
+  bool _encodegifimage(std::vector<uint8_t> &output_buffer) {
+    MsfGifState gif_state;
+    if (!msf_gif_begin(&gif_state, _imgs[0].cols, _imgs[0].rows)) {
+      _last_error = "Failed to initialize GIF writer";
+      return false;
+    }
+
+    int delay_error = 0;
+    for (size_t i = 0; i < _imgs.size(); i++) {
+      cv::Mat img;
+
+      switch (_imgs[i].channels()) {
+        case 1:
+          cv::cvtColor(_imgs[i], img, cv::COLOR_GRAY2BGRA);
+          break;
+
+        case 2:
+          {
+            std::vector<cv::Mat> ga_channels, bgra_channels;
+            cv::split(_imgs[i], ga_channels);
+            cv::cvtColor(ga_channels[0], img, cv::COLOR_GRAY2BGRA);
+            cv::split(img, bgra_channels);
+            bgra_channels[3] = ga_channels[1];
+            cv::merge(bgra_channels, img);
+          }
+          break;
+
+        case 3:
+          cv::cvtColor(_imgs[i], img, cv::COLOR_BGR2BGRA);
+          break;
+
+        default:
+          img = _imgs[i];
+          break;
+      }
+
+      // Convert milliseconds to centiseconds
+      int delay = _delays[i];
+      delay_error += delay % 10;
+      delay /= 10;
+      if (delay_error >= 10) {
+        delay += 1;
+        delay_error -= 10;
+      }
+      if (!msf_gif_frame(&gif_state,
+            img.data,
+            delay,
+            16,
+            img.step)) {
+        _last_error = "Failed to add frame " + std::to_string(i);
+        return false;
+      }
+    }
+
+    MsfGifResult result = msf_gif_end(&gif_state);
+    bool success = result.data != nullptr;
+    if (success) {
+      output_buffer.resize(result.dataSize);
+      memcpy(output_buffer.data(), result.data, result.dataSize);
+    }
+
+    msf_gif_free(result);
+    return success;
   }
 
   bool _encodeheifimage(heif_compression_format heif_format,

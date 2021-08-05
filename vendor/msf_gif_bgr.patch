@@ -1,0 +1,58 @@
+--- msf_gif.h	2021-08-05 16:25:09.329095611 +0300
++++ bgr.h	2021-08-05 16:23:12.488503056 +0300
+@@ -226,17 +226,28 @@
+ 
+             #if (defined (__SSE2__) || defined (_M_X64) || _M_IX86_FP == 2) && !defined(MSF_GIF_NO_SSE2)
+                 __m128i k = _mm_loadu_si128((__m128i *) &ditherKernel[(y & 3) * 4]);
+-                __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, rbits), _mm_slli_epi32(_mm_srli_epi32(k, bbits), 16));
++                #ifdef MSF_GIF_BGR
++                    __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, bbits), _mm_slli_epi32(_mm_srli_epi32(k, rbits), 16));
++                #else
++                    __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, rbits), _mm_slli_epi32(_mm_srli_epi32(k, bbits), 16));
++                #endif
+                 // MsfTimeLoop("SIMD")
+                 for (; x < width - 3; x += 4) {
+                     uint8_t * pixels = &raw[y * pitch + x * 4];
+                     __m128i p = _mm_loadu_si128((__m128i *) pixels);
+ 
+                     __m128i rb = _mm_and_si128(p, _mm_set1_epi32(0x00FF00FF));
+-                    __m128i rb1 = _mm_mullo_epi16(rb, _mm_set_epi16(bmul, rmul, bmul, rmul, bmul, rmul, bmul, rmul));
+-                    __m128i rb2 = _mm_adds_epu16(rb1, k2);
+-                    __m128i r3 = _mm_srli_epi32(_mm_and_si128(rb2, _mm_set1_epi32(0x0000FFFF)), 16 - rbits);
+-                    __m128i b3 = _mm_and_si128(_mm_srli_epi32(rb2, 32 - rbits - gbits - bbits), _mm_set1_epi32(bmask));
++                    #ifdef MSF_GIF_BGR
++                        __m128i rb1 = _mm_mullo_epi16(rb, _mm_set_epi16(rmul, bmul, rmul, bmul, rmul, bmul, rmul, bmul));
++                        __m128i rb2 = _mm_adds_epu16(rb1, k2);
++                        __m128i r3 = _mm_srli_epi32(rb2, 32 - rbits );
++                        __m128i b3 = _mm_and_si128(_mm_srli_epi32(rb2, 16 - rbits - gbits - bbits), _mm_set1_epi32(bmask));
++                    #else
++                        __m128i rb1 = _mm_mullo_epi16(rb, _mm_set_epi16(bmul, rmul, bmul, rmul, bmul, rmul, bmul, rmul));
++                        __m128i rb2 = _mm_adds_epu16(rb1, k2);
++                        __m128i r3 = _mm_srli_epi32(_mm_and_si128(rb2, _mm_set1_epi32(0x0000FFFF)), 16 - rbits);
++                        __m128i b3 = _mm_and_si128(_mm_srli_epi32(rb2, 32 - rbits - gbits - bbits), _mm_set1_epi32(bmask));
++                    #endif
+ 
+                     __m128i g = _mm_and_si128(_mm_srli_epi32(p, 8), _mm_set1_epi32(0x000000FF));
+                     __m128i g1 = _mm_mullo_epi16(g, _mm_set1_epi32(gmul));
+@@ -274,10 +285,17 @@
+ 
+                 int dx = x & 3, dy = y & 3;
+                 int k = ditherKernel[dy * 4 + dx];
+-                cooked[y * width + x] =
+-                    (msf_imin(65535, p[2] * bmul + (k >> bbits)) >> (16 - rbits - gbits - bbits) & bmask) |
+-                    (msf_imin(65535, p[1] * gmul + (k >> gbits)) >> (16 - rbits - gbits        ) & gmask) |
+-                     msf_imin(65535, p[0] * rmul + (k >> rbits)) >> (16 - rbits                );
++                #ifdef MSF_GIF_BGR
++                    cooked[y * width + x] =
++                        (msf_imin(65535, p[0] * bmul + (k >> bbits)) >> (16 - rbits - gbits - bbits) & bmask) |
++                        (msf_imin(65535, p[1] * gmul + (k >> gbits)) >> (16 - rbits - gbits        ) & gmask) |
++                         msf_imin(65535, p[2] * rmul + (k >> rbits)) >> (16 - rbits                );
++                #else
++                    cooked[y * width + x] =
++                        (msf_imin(65535, p[2] * bmul + (k >> bbits)) >> (16 - rbits - gbits - bbits) & bmask) |
++                        (msf_imin(65535, p[1] * gmul + (k >> gbits)) >> (16 - rbits - gbits        ) & gmask) |
++                         msf_imin(65535, p[0] * rmul + (k >> rbits)) >> (16 - rbits                );
++                #endif
+             }
+         }
+ 
