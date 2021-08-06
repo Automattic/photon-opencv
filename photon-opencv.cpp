@@ -14,6 +14,7 @@
 #define MSF_GIF_BGR
 #define MSF_GIF_IMPL
 #include <msf_gif.h>
+#include <webp/demux.h>
 #include "tempfile.h"
 #include "srgb.icc.h"
 
@@ -283,6 +284,68 @@ protected:
     }
   }
 
+  bool _maybedecodewithlibwebp(bool silent) {
+    WebPAnimDecoderOptions options;
+    WebPAnimDecoderOptionsInit(&options);
+    options.color_mode = MODE_BGRA;
+    options.use_threads = true;
+
+    WebPData data;
+    WebPDataInit(&data);
+    data.size = _raw_image_data.size();
+    data.bytes = (const uint8_t *) _raw_image_data.data();
+
+    std::unique_ptr<WebPAnimDecoder, decltype(&WebPAnimDecoderDelete)>
+      decoder(WebPAnimDecoderNew(&data, &options), &WebPAnimDecoderDelete);
+    if (!decoder.get()) {
+      // True so other formats can be tried
+      return true;
+    }
+
+    WebPAnimInfo anim_info;
+    if (!WebPAnimDecoderGetInfo(decoder.get(), &anim_info)) {
+      std::string message = "Failed get WebP animation info";
+
+      if (silent) {
+        _last_error = message;
+        return false;
+      }
+
+      throw Php::Exception(message);
+    }
+
+    int last_ts = 0;
+    while (WebPAnimDecoderHasMoreFrames(decoder.get())) {
+      uint8_t *buffer;
+      int ts;
+      if (!WebPAnimDecoderGetNext(decoder.get(), &buffer, &ts)) {
+        _imgs.clear();
+        _delays.clear();
+
+        std::string message = "Failed to decode WebP frame";
+
+        if (silent) {
+          _last_error = message;
+          return false;
+        }
+
+        throw Php::Exception(message);
+      }
+
+      _delays.push_back(ts - last_ts);
+      last_ts = ts;
+
+      _imgs.emplace_back(anim_info.canvas_height,
+          anim_info.canvas_width,
+          CV_8UC4);
+      memcpy(_imgs.back().data,
+          buffer,
+          anim_info.canvas_width * anim_info.canvas_height * 4 );
+    }
+
+    return true;
+  }
+
   bool _maybedecodewithgiflib(bool silent) {
     std::unique_ptr<GifFileType, void (*) (GifFileType *)> gif(nullptr,
         [] (GifFileType *gif) {
@@ -488,7 +551,14 @@ protected:
     }
 
     if (_imgs.empty()) {
-      // Not supported by OpenCV or giflib, try libheif
+      // Static WebPs should be decoded by OpenCV. Animations require libwebp
+      if (!_maybedecodewithlibwebp(silent)) {
+        return false;
+      }
+    }
+
+    if (_imgs.empty()) {
+      // Not supported by OpenCV, giflib, or libwebp, try libheif
 
       std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
         heif_context_alloc(), &heif_context_free);

@@ -1,9 +1,10 @@
 PHP_CONFIG=php-config
 CXXFLAGS=-Wall -Wextra -O3 -std=c++17 -fpic -isystem vendor \
-		`pkg-config --cflags libheif opencv4 exiv2 lcms2 \
+		`pkg-config --cflags libheif opencv4 exiv2 lcms2 libwebpdemux \
 		| sed -E "s/(^| )-I/\1-isystem /g"` \
 		`$(PHP_CONFIG) --includes | sed -E "s/(^| )-I/\1-isystem /g"`
-LDLIBS=-lphpcpp -lgif `pkg-config --libs libheif opencv4 exiv2 lcms2`
+LDLIBS=-lphpcpp -lgif \
+			 `pkg-config --libs libheif opencv4 exiv2 lcms2 libwebpdemux`
 LDFLAGS=-shared
 
 OBJECTS=photon-opencv.o tempfile.o
