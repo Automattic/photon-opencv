@@ -15,6 +15,8 @@
 #define MSF_GIF_IMPL
 #include <msf_gif.h>
 #include <webp/demux.h>
+#include <webp/encode.h>
+#include <webp/mux.h>
 #include "tempfile.h"
 #include "srgb.icc.h"
 
@@ -1015,11 +1017,15 @@ protected:
 
       return status;
     }
-
-    if ("gif" == _format) {
+    else if ("gif" == _format) {
       return _encodegifimage(output_buffer);
     }
+    else if ("webp" == _format && _imgs.size() > 1) {
+      // Only use libwebp directly if it's an animation
+      return _encodewebpanimation(output_buffer);
+    }
 
+    // Default encoding via OpenCV
     std::vector<int> img_parameters;
     if ("jpeg" == _format) {
       int quality = -1 == _compression_quality?
@@ -1098,6 +1104,112 @@ protected:
         return false;
       }
     }
+
+    return true;
+  }
+
+  bool _encodewebpanimation(std::vector<uint8_t> &output_buffer) {
+    WebPAnimEncoderOptions options;
+    WebPAnimEncoderOptionsInit(&options);
+
+    bool lossless = false;
+    auto lossless_option = _image_options.find("webp:lossless");
+    if (lossless_option != _image_options.end()
+        && "true" == lossless_option->second) {
+      lossless = true;
+    }
+
+    bool minimize_requested = false;
+    auto minimize_option = _image_options.find("webp:minimize_size");
+    if (minimize_option != _image_options.end()
+        && "true" == minimize_option->second) {
+      minimize_requested = true;
+    }
+    options.minimize_size = minimize_requested;
+
+    // If lossless, quality indicates the effort put into compression
+    float quality = _compression_quality != -1?
+      _compression_quality : WEBP_DEFAULT_QUALITY;
+
+    // Lower is faster, higher is slower, but better (range: [0-6])
+    int method = minimize_requested? 4 : 1;
+
+    std::unique_ptr<WebPAnimEncoder, decltype(&WebPAnimEncoderDelete)>
+      encoder(WebPAnimEncoderNew(_imgs[0].cols, _imgs[0].rows, &options),
+          &WebPAnimEncoderDelete);
+    if (!encoder.get()) {
+      _last_error = "Failed to initialize WebP animation encoder";
+      return false;
+    }
+
+    WebPConfig config;
+    WebPConfigInit(&config);
+    config.lossless = lossless;
+    config.quality = quality;
+    config.method = method;
+
+    int timestamp = 0;
+    for (size_t i = 0; i < _imgs.size(); i++) {
+      cv::Mat img;
+      switch (_imgs[i].channels()) {
+        case 1:
+          cv::cvtColor(_imgs[i], img, cv::COLOR_GRAY2BGRA);
+          break;
+
+        case 2:
+          {
+            std::vector<cv::Mat> ga_channels, bgra_channels;
+            cv::split(_imgs[i], ga_channels);
+            cv::cvtColor(ga_channels[0], img, cv::COLOR_GRAY2BGRA);
+            cv::split(img, bgra_channels);
+            bgra_channels[3] = ga_channels[1];
+            cv::merge(bgra_channels, img);
+          }
+          break;
+
+        case 3:
+          cv::cvtColor(_imgs[i], img, cv::COLOR_BGR2BGRA);
+          break;
+
+        default:
+          img = _imgs[i];
+          break;
+      }
+
+      WebPPicture frame;
+      WebPPictureInit(&frame);
+      frame.use_argb = 1;
+      frame.argb = (uint32_t *) img.data;
+      frame.argb_stride = img.step / 4;
+      frame.width = img.cols;
+      frame.height = img.rows;
+
+      if (!WebPAnimEncoderAdd(encoder.get(), &frame, timestamp, &config)) {
+        _last_error = "Failed to add frame "
+          + std::to_string(i)
+          + " to WebP animation. "
+          + WebPAnimEncoderGetError(encoder.get());
+        return false;
+      }
+
+      timestamp += _delays[i];
+    }
+    if (!WebPAnimEncoderAdd(encoder.get(), nullptr, timestamp, nullptr)) {
+        _last_error = "Failed to add last timestamp to WebP animation";
+        return false;
+    }
+
+    WebPData data;
+    WebPDataInit(&data);
+    if (!WebPAnimEncoderAssemble(encoder.get(), &data)) {
+      WebPDataClear(&data);
+      _last_error = "Failed to assemble WebP animation";
+      return false;
+    }
+
+    output_buffer.resize(data.size);
+    memcpy(output_buffer.data(), data.bytes, data.size);
+    WebPDataClear(&data);
 
     return true;
   }
