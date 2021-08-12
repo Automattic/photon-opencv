@@ -1893,7 +1893,7 @@ const heif_encoder_descriptor *Photon_OpenCV::_aom_descriptor = nullptr;
 
 extern "C" {
   PHPCPP_EXPORT void *get_module() {
-    static Php::Extension extension("photon-opencv", "0.2.14");
+    static Php::Extension extension("photon-opencv", "0.2.15");
 
     Php::Class<Photon_OpenCV> photon_opencv("Photon_OpenCV");
 
