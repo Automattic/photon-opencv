@@ -17,6 +17,7 @@
 #include <webp/demux.h>
 #include <webp/encode.h>
 #include <webp/mux.h>
+#include <stdexcept>
 #include "tempfile.h"
 #include "srgb.icc.h"
 
