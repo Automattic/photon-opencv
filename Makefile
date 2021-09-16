@@ -9,10 +9,12 @@ LDLIBS=-lphpcpp -lgif \
 LDFLAGS=-shared
 
 OBJECTS=photon-opencv.o tempfile.o
+DECODER_HEADERS=decoder.h giflib-decoder.h opencv-decoder.h libwebp-decoder.h \
+	libheif-decoder.h
 
 all: photon-opencv.so
 
-photon-opencv.o: vendor/msf_gif.h
+photon-opencv.o: vendor/msf_gif.h $(DECODER_HEADERS)
 
 vendor/msf_gif.h: vendor/msf_gif_bgr.patch vendor/msf_gif_rc.h
 	cp vendor/msf_gif_rc.h "$@"

@@ -19,6 +19,11 @@
 #include <webp/mux.h>
 #include "tempfile.h"
 #include "srgb.icc.h"
+#include "decoder.h"
+#include "opencv-decoder.h"
+#include "giflib-decoder.h"
+#include "libwebp-decoder.h"
+#include "libheif-decoder.h"
 
 #define _checkimageloaded() { \
   if (_raw_image_data.empty()) { \
@@ -286,144 +291,28 @@ protected:
     }
   }
 
-  bool _maybedecodewithlibwebp(bool silent) {
-    WebPAnimDecoderOptions options;
-    WebPAnimDecoderOptionsInit(&options);
-    options.color_mode = MODE_BGRA;
-    options.use_threads = true;
+  bool _maybedecodeimage(bool silent=true) {
+    _checkimageloaded();
 
-    WebPData data;
-    WebPDataInit(&data);
-    data.size = _raw_image_data.size();
-    data.bytes = (const uint8_t *) _raw_image_data.data();
-
-    std::unique_ptr<WebPAnimDecoder, decltype(&WebPAnimDecoderDelete)>
-      decoder(WebPAnimDecoderNew(&data, &options), &WebPAnimDecoderDelete);
-    if (!decoder.get()) {
-      // True so other formats can be tried
+    if (!_imgs.empty()) {
       return true;
     }
 
-    WebPAnimInfo anim_info;
-    if (!WebPAnimDecoderGetInfo(decoder.get(), &anim_info)) {
-      std::string message = "Failed get WebP animation info";
+    std::unique_ptr<Decoder> decoder;
 
-      if (silent) {
-        _last_error = message;
-        return false;
-      }
-
-      throw Php::Exception(message);
+    decoder.reset(new OpenCV_Decoder(&_raw_image_data));
+    if (!decoder->loaded()) {
+      decoder.reset(new Giflib_Decoder(&_raw_image_data));
+    }
+    if (!decoder->loaded()) {
+      decoder.reset(new LibWebP_Decoder(&_raw_image_data));
+    }
+    if (!decoder->loaded()) {
+      decoder.reset(new Libheif_Decoder(&_raw_image_data));
     }
 
-    int last_ts = 0;
-    while (WebPAnimDecoderHasMoreFrames(decoder.get())) {
-      uint8_t *buffer;
-      int ts;
-      if (!WebPAnimDecoderGetNext(decoder.get(), &buffer, &ts)) {
-        _imgs.clear();
-        _delays.clear();
-
-        std::string message = "Failed to decode WebP frame";
-
-        if (silent) {
-          _last_error = message;
-          return false;
-        }
-
-        throw Php::Exception(message);
-      }
-
-      _delays.push_back(ts - last_ts);
-      last_ts = ts;
-
-      _imgs.emplace_back(anim_info.canvas_height,
-          anim_info.canvas_width,
-          CV_8UC4);
-      memcpy(_imgs.back().data,
-          buffer,
-          anim_info.canvas_width * anim_info.canvas_height * 4 );
-    }
-
-    return true;
-  }
-
-  bool _maybedecodewithgiflib(bool silent) {
-    std::unique_ptr<GifFileType, void (*) (GifFileType *)> gif(nullptr,
-        [] (GifFileType *gif) {
-          DGifCloseFile(gif, nullptr);
-        });
-
-    int error = GIF_OK;
-    std::pair<int, const std::string *> offset_and_data(0, &_raw_image_data);
-    GifFileType *raw_gif = DGifOpen(&offset_and_data,
-        [] (GifFileType *gif, GifByteType *buffer, int size) {
-          std::pair<int, const std::string *> *user =
-            (std::pair<int, const std::string *> *) gif->UserData;
-          int offset = user->first;
-          const std::string *data = user->second;
-          int reading = std::min(size, (int) data->size() - offset);
-          if (reading <= 0) {
-            return 0;
-          }
-          memcpy(buffer, data->data() + offset, reading);
-          user->first += reading;
-          return reading;
-        },
-        &error);
-
-    if (GIF_OK != error) {
-      // Return true so other formats can be tried
-      return true;
-    }
-    gif.reset(raw_gif);
-
-    if (GIF_OK != DGifSlurp(gif.get()) ) {
-      // Return true so other formats can be tried
-      return true;
-    }
-
-    // Browsers ignore the background color and use transparent instead
-    cv::Vec4b bg_scalar(0, 0, 0, 0);
-
-    std::vector<GraphicsControlBlock> gcbs(gif->ImageCount);
-    for (int i = 0; i < gif->ImageCount; i++) {
-      // If no gcb is found, default values are returned
-      DGifSavedExtensionToGCB(gif.get(), i, &gcbs[i]);
-
-      const auto &desc = gif->SavedImages[i].ImageDesc;
-      if (desc.Width + desc.Left > gif->SWidth
-          || desc.Height + desc.Top > gif->SHeight
-          || desc.Width <= 0
-          || desc.Height <= 0
-          || desc.Left < 0
-          || desc.Top < 0 ) {
-
-        _delays.clear();
-        _imgs.clear();
-
-        std::string message = "Invalid description ("
-          + std::to_string(desc.Left) + ", "
-          + std::to_string(desc.Top) + ", "
-          + std::to_string(desc.Width) + ", "
-          + std::to_string(desc.Height) + ") for frame "
-          + std::to_string(i);
-
-        if (!silent) {
-          throw Php::Exception(message);
-        }
-
-        _last_error = message;
-        return false;
-      }
-    }
-
-    bool has_alpha = _header_channels == 4;
-
-    if (gif->SColorMap
-        && gif->SBackGroundColor >= gif->SColorMap->ColorCount) {
-      std::string message = "Invalid background color index "
-        + std::to_string(gif->SBackGroundColor);
+    if (!decoder->loaded()) {
+      std::string message = "Unable to decode image";
 
       if (!silent) {
         throw Php::Exception(message);
@@ -433,235 +322,26 @@ protected:
       return false;
     }
 
-
-    cv::Mat previous_cache;
-    for (int i = 0; i < gif->ImageCount; i++) {
-      // Description already validated
-      const auto &desc = gif->SavedImages[i].ImageDesc;
-
-      cv::Mat img;
-      if (0 == i) {
-        img = cv::Mat(gif->SHeight,
-            gif->SWidth,
-            has_alpha? CV_8UC4 : CV_8UC3,
-            bg_scalar);
-        img.copyTo(previous_cache);
-      }
-      else {
-        if (gcbs[i-1].DisposalMode == DISPOSE_BACKGROUND) {
-          _imgs.back().copyTo(img);
-          const auto &p_desc = gif->SavedImages[i-1].ImageDesc;
-          cv::rectangle(img,
-              cv::Rect(p_desc.Left, p_desc.Top, p_desc.Width, p_desc.Height),
-              bg_scalar,
-              -1);
-          img.copyTo(previous_cache);
-        }
-        else if (gcbs[i-1].DisposalMode == DISPOSE_PREVIOUS) {
-          previous_cache.copyTo(img);
-        }
-        else {
-          _imgs.back().copyTo(img);
-          img.copyTo(previous_cache);
-        }
-      }
-
-      cv::Mat roi(img, cv::Rect(desc.Left, desc.Top, desc.Width, desc.Height));
-      auto *color_map = desc.ColorMap? desc.ColorMap : gif->SColorMap;
-      if (!color_map) {
-        _delays.clear();
-        _imgs.clear();
-
-        std::string message = "Invalid color map for frame"
-          + std::to_string(i);
-
-        if (!silent) {
-          throw Php::Exception(message);
-        }
-
-        _last_error = message;
-        return false;
-      }
-
-      int n = 0;
-      for (int y = 0; y < roi.rows; y++) {
-        for (int x = 0; x < roi.cols; x++) {
-          int ci = gif->SavedImages[i].RasterBits[n++];
-          if (ci >= color_map->ColorCount) {
-            _delays.clear();
-            _imgs.clear();
-
-            std::string message = "Invalid color index " + std::to_string(ci)
-              + " in frame " + std::to_string(i);
-
-            if (!silent) {
-              throw Php::Exception(message);
-            }
-
-            _last_error = message;
-            return false;
-          }
-
-          if (ci == gcbs[i].TransparentColor) {
-            continue;
-          }
-
-          auto c = color_map->Colors[ci];
-          if (has_alpha) {
-            roi.at<cv::Vec4b>(y, x) = cv::Vec4b(c.Blue, c.Green, c.Red, 255);
-          }
-          else {
-            roi.at<cv::Vec3b>(y, x) = cv::Vec3b(c.Blue, c.Green, c.Red);
-          }
-        }
-      }
-
+    cv::Mat img;
+    int delay;
+    while (decoder->get_next_frame(img, delay)) {
       _imgs.push_back(img);
-      // Convert to milliseconds
-      _delays.push_back(gcbs[i].DelayTime * 10);
-    }
-
-    return true;
-  }
-
-  bool _maybedecodeimage(bool silent=true) {
-    _checkimageloaded();
-
-    if (!_imgs.empty()) {
-      return true;
-    }
-
-    /*
-     * Ideally, we would decode directly from memory. However, opencv is more
-     * strict when imdecode is used. This results in jpegs that are missing
-     * bytes and pngs that have broken exif information to only be parsed by
-     * imread. In order to support more files, we write the files to the
-     * filesystem so that imread can be used.
-    */
-    TempFile temp_image_file(_raw_image_data);
-    cv::Mat img = cv::imread(temp_image_file.get_path(), cv::IMREAD_UNCHANGED);
-    if (!img.empty()) {
-      _imgs.push_back(img);
-      _delays.push_back(0);
+      _delays.push_back(delay);
     }
 
     if (_imgs.empty()) {
-      // Not a static image, try giflib
-      if (!_maybedecodewithgiflib(silent)) {
-        return false;
+      std::string message = "Zero images were retrieved from the input file";
+
+      if (!silent) {
+        throw Php::Exception(message);
       }
+
+      _last_error = message;
+      return false;
     }
 
-    if (_imgs.empty()) {
-      // Static WebPs should be decoded by OpenCV. Animations require libwebp
-      if (!_maybedecodewithlibwebp(silent)) {
-        return false;
-      }
-    }
-
-    if (_imgs.empty()) {
-      // Not supported by OpenCV, giflib, or libwebp, try libheif
-
-      std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
-        heif_context_alloc(), &heif_context_free);
-
-      heif_error error;
-
-      error = heif_context_read_from_memory_without_copy(context.get(),
-        (void *) _raw_image_data.data(),
-        _raw_image_data.size(),
-        nullptr);
-      if (error.code) {
-        std::string message = std::string("Failed to read heif context: ")
-          + error.message;
-
-        if (!silent) {
-          throw Php::Exception(message);
-        }
-
-        _last_error = message;
-        return false;
-      }
-
-      std::unique_ptr<heif_image_handle,
-        decltype(&heif_image_handle_release)>
-        handle(nullptr, &heif_image_handle_release);
-      heif_image_handle *raw_handle = nullptr;
-      error = heif_context_get_primary_image_handle(context.get(),
-        &raw_handle);
-      handle.reset(raw_handle);
-      if (error.code) {
-        std::string message = std::string(
-            "Failed to get primary image handle: ") + error.message;
-
-        if (!silent) {
-          throw Php::Exception(message);
-        }
-
-        _last_error = message;
-        return false;
-      }
-
-      bool has_alpha = heif_image_handle_has_alpha_channel(handle.get());
-
-      std::unique_ptr<heif_image, decltype(&heif_image_release)>
-        h_image(nullptr, &heif_image_release);
-      heif_image *raw_h_image = nullptr;
-      error = heif_decode_image(handle.get(),
-        &raw_h_image,
-        heif_colorspace_RGB,
-        has_alpha? heif_chroma_interleaved_RGBA : heif_chroma_interleaved_RGB,
-        nullptr);
-      h_image.reset(raw_h_image);
-      if (error.code) {
-        std::string message = std::string("Failed to decode image: ")
-          + error.message;
-
-        if (!silent) {
-          throw Php::Exception(message);
-        }
-
-        _last_error = message;
-        return false;
-      }
-
-      int stride;
-      uint8_t *data = heif_image_get_plane(h_image.get(),
-        heif_channel_interleaved,
-        &stride);
-      cv::Mat rgb(heif_image_handle_get_height(handle.get()),
-        heif_image_handle_get_width(handle.get()),
-        has_alpha? CV_8UC4 : CV_8UC3,
-        data,
-        stride);
-      cv::cvtColor(rgb,
-          img,
-          has_alpha? cv::COLOR_RGBA2BGRA : cv::COLOR_RGB2BGR);
-      _imgs.push_back(img);
-      _delays.push_back(0);
-
-      // This redundand ICC profile extraction code can be removed when
-      // exiv2 0.27.4 is released, as it should support the new formats.
-      // For now, it will fail gracefully later in the loading process
-      size_t profile_size = heif_image_get_raw_color_profile_size(
-        h_image.get());
-      if (profile_size) {
-        _icc_profile.resize(profile_size);
-        error = heif_image_handle_get_raw_color_profile(handle.get(),
-          _icc_profile.data());
-        if (error.code) {
-          std::string message = std::string(
-              "Failed to extract color profile: ") + error.message;
-
-          if (!silent) {
-            throw Php::Exception(message);
-          }
-
-          _last_error = message;
-          return false;
-        }
-      }
-    }
+    // This may be reworked once exiv2 supports all relevant formats
+    decoder->get_icc_profile(_icc_profile);
 
     _enforce8u();
     return true;
