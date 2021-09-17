@@ -5,16 +5,18 @@ CXXFLAGS=-Wall -Wextra -O3 -std=c++17 -fpic -isystem vendor \
 			| sed -E "s/(^| )-I/\1-isystem /g"` \
 		`$(PHP_CONFIG) --includes | sed -E "s/(^| )-I/\1-isystem /g"`
 LDLIBS=-lphpcpp -lgif \
-			 `pkg-config --libs $(PKGC_LIBS)`
+			`pkg-config --libs $(PKGC_LIBS)`
 LDFLAGS=-shared
 
 OBJECTS=photon-opencv.o tempfile.o
 DECODER_HEADERS=decoder.h giflib-decoder.h opencv-decoder.h libwebp-decoder.h \
 	libheif-decoder.h
+ENCODER_HEADERS=encoder.h msfgif-encoder.h opencv-encoder.h libwebp-encoder.h \
+	libheif-encoder.h
 
 all: photon-opencv.so
 
-photon-opencv.o: vendor/msf_gif.h $(DECODER_HEADERS)
+photon-opencv.o: vendor/msf_gif.h $(DECODER_HEADERS) $(ENCODER_HEADERS)
 
 vendor/msf_gif.h: vendor/msf_gif_bgr.patch vendor/msf_gif_rc.h
 	cp vendor/msf_gif_rc.h "$@"

@@ -20,10 +20,15 @@
 #include "tempfile.h"
 #include "srgb.icc.h"
 #include "decoder.h"
+#include "encoder.h"
 #include "opencv-decoder.h"
+#include "opencv-encoder.h"
 #include "giflib-decoder.h"
+#include "msfgif-encoder.h"
 #include "libwebp-decoder.h"
+#include "libwebp-encoder.h"
 #include "libheif-decoder.h"
+#include "libheif-encoder.h"
 
 #define _checkimageloaded() { \
   if (_raw_image_data.empty()) { \
@@ -53,8 +58,6 @@ protected:
   const int PNG_DEFAULT_QUALITY = 21;
 
   static cmsHPROFILE _srgb_profile;
-
-  static const heif_encoder_descriptor *_aom_descriptor;
 
   void _enforce8u() {
     if (CV_8U != _imgs[0].depth()) {
@@ -219,17 +222,6 @@ protected:
     _srgb_profile = cmsOpenProfileFromMem(srgb_icc, sizeof(srgb_icc)-1);
     if (!_srgb_profile) {
       throw std::runtime_error("Failed to decode builtin sRGB profile");
-    }
-
-    std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
-      heif_context_alloc(), &heif_context_free);
-
-    if (!heif_context_get_encoder_descriptors(context.get(),
-        heif_compression_AV1,
-        "aom",
-        &_aom_descriptor,
-        1)) {
-      throw std::runtime_error("AOM encoder for AVIF images not available");
     }
   }
 
@@ -637,122 +629,58 @@ protected:
     /* OpenCV strips the profile, we need to apply it first */
     _converttosrgb();
 
-    bool lossless_requested = false;
-    auto lossless_option = _image_options.find(_format + ":lossless");
-    if (lossless_option != _image_options.end()
-        && "true" == lossless_option->second) {
-      lossless_requested = true;
+    int quality = _compression_quality;
+    if (-1 == quality) {
+      if ("jpeg" == _format) {
+        quality = JPEG_DEFAULT_QUALITY;
+      }
+      else if ("png" == _format) {
+        quality = PNG_DEFAULT_QUALITY;
+      }
+      else if ("webp" == _format) {
+        quality = WEBP_DEFAULT_QUALITY;
+      }
+      else if ("avif" == _format) {
+        quality = AVIF_DEFAULT_QUALITY;
+      }
     }
 
+    std::unique_ptr<Encoder> encoder;
     if ("avif" == _format) {
-      // Explicit rotation handling and early return, as exiv2 doesn't support
-      // the format and libheif provides no way of inseting orientation
-      // metadata. Remove rotation code and refactor when exiv2 0.27.4 is out
-      cv::Mat original_img;
-
-      long orientation = _original_orientation.get()?
-        _original_orientation.get()->toLong() : 1;
-      if (orientation < 1 || orientation > 8) {
-        orientation = 1;
-      }
-
-      if (orientation != 1) {
-        int rotation = -1;
-        switch (orientation) {
-          case 3:
-          case 4:
-            rotation = cv::ROTATE_180;
-            break;
-
-          case 5:
-          case 6:
-            rotation = cv::ROTATE_90_CLOCKWISE;
-            break;
-
-          case 7:
-          case 8:
-            rotation = cv::ROTATE_90_COUNTERCLOCKWISE;
-            break;
-        }
-
-        _imgs[0].copyTo(original_img);
-        if (rotation != -1) {
-          cv::rotate(_imgs[0], _imgs[0], rotation);
-        }
-        if (2 == orientation
-            || 4 == orientation
-            || 5 == orientation
-            || 7 == orientation) {
-          cv::flip(_imgs[0], _imgs[0], 1);
-        }
-      }
-
-      bool status = _encodeheifimage(heif_compression_AV1,
-          output_buffer,
-          lossless_requested);
-
-      if (!original_img.empty()) {
-        _imgs[0] = original_img;
-      }
-
-      return status;
-    }
-    else if ("gif" == _format) {
-      return _encodegifimage(output_buffer);
+      encoder.reset(new Libheif_Encoder(
+            _format,
+            quality,
+            &_image_options,
+            &output_buffer));
     }
     else if ("webp" == _format && _imgs.size() > 1) {
-      // Only use libwebp directly if it's an animation
-      return _encodewebpanimation(output_buffer);
+      encoder.reset(new LibWebP_Encoder(
+            _format,
+            quality,
+            &_image_options,
+            &output_buffer));
+    }
+    else if ("gif" == _format && _imgs.size() > 1) {
+      encoder.reset(new Msfgif_Encoder(
+            _format,
+            quality,
+            &_image_options,
+            &output_buffer));
+    }
+    else {
+      encoder.reset(new OpenCV_Encoder(
+            _format,
+            quality,
+            &_image_options,
+            &output_buffer));
     }
 
-    // Default encoding via OpenCV
-    std::vector<int> img_parameters;
-    if ("jpeg" == _format) {
-      int quality = -1 == _compression_quality?
-        JPEG_DEFAULT_QUALITY : _compression_quality;
-      img_parameters.push_back(cv::IMWRITE_JPEG_QUALITY);
-      img_parameters.push_back(quality);
-    }
-    else if ("png" == _format) {
-      int quality = -1 == _compression_quality?
-        PNG_DEFAULT_QUALITY : _compression_quality;
-      /* GMagick uses a single scalar for storing two values:
-        _compressioN_quality = compression_level*10 + filter_type */
-      img_parameters.push_back(cv::IMWRITE_PNG_COMPRESSION);
-      img_parameters.push_back(quality/10);
-      /* OpenCV does not support setting the filters like GMagick,
-         instead we get to pick the strategy, so we ignore it
-         https://docs.opencv.org/4.1.0/d4/da8/group__imgcodecs.html */
-    }
-    else if ("webp" == _format) {
-      img_parameters.push_back(cv::IMWRITE_WEBP_QUALITY);
-      if (lossless_requested) {
-        img_parameters.push_back(101);
-      }
-      else {
-        int quality = -1 == _compression_quality?
-          WEBP_DEFAULT_QUALITY : _compression_quality;
-        img_parameters.push_back(quality);
+    for (size_t i = 0; i < _imgs.size(); i++) {
+      if (!encoder->add_frame(_imgs[i], _delays[i])) {
+        return false;
       }
     }
-
-    std::string failure_details;
-    bool encoded = false;
-    try {
-      encoded = cv::imencode("." + _format,
-          _imgs[0],
-          output_buffer,
-          img_parameters);
-    }
-    catch (cv::Exception &e) {
-      failure_details = e.what();
-    }
-
-    if (!encoded) {
-      _last_error = "Failed to encode image with opencv";
-      if (failure_details.size()) {
-        _last_error += ": " + failure_details;
-      }
+    if (!encoder->finalize()) {
       return false;
     }
 
@@ -783,336 +711,6 @@ protected:
         _last_error = error.what();
         return false;
       }
-    }
-
-    return true;
-  }
-
-  bool _encodewebpanimation(std::vector<uint8_t> &output_buffer) {
-    WebPAnimEncoderOptions options;
-    WebPAnimEncoderOptionsInit(&options);
-
-    bool lossless = false;
-    auto lossless_option = _image_options.find("webp:lossless");
-    if (lossless_option != _image_options.end()
-        && "true" == lossless_option->second) {
-      lossless = true;
-    }
-
-    bool minimize_requested = false;
-    auto minimize_option = _image_options.find("webp:minimize_size");
-    if (minimize_option != _image_options.end()
-        && "true" == minimize_option->second) {
-      minimize_requested = true;
-    }
-    options.minimize_size = minimize_requested;
-
-    // If lossless, quality indicates the effort put into compression
-    float quality = _compression_quality != -1?
-      _compression_quality : WEBP_DEFAULT_QUALITY;
-
-    // Lower is faster, higher is slower, but better (range: [0-6])
-    int method = minimize_requested? 4 : 1;
-
-    std::unique_ptr<WebPAnimEncoder, decltype(&WebPAnimEncoderDelete)>
-      encoder(WebPAnimEncoderNew(_imgs[0].cols, _imgs[0].rows, &options),
-          &WebPAnimEncoderDelete);
-    if (!encoder.get()) {
-      _last_error = "Failed to initialize WebP animation encoder";
-      return false;
-    }
-
-    WebPConfig config;
-    WebPConfigInit(&config);
-    config.lossless = lossless;
-    config.quality = quality;
-    config.method = method;
-
-    int timestamp = 0;
-    for (size_t i = 0; i < _imgs.size(); i++) {
-      cv::Mat img;
-      switch (_imgs[i].channels()) {
-        case 1:
-          cv::cvtColor(_imgs[i], img, cv::COLOR_GRAY2BGRA);
-          break;
-
-        case 2:
-          {
-            std::vector<cv::Mat> ga_channels, bgra_channels;
-            cv::split(_imgs[i], ga_channels);
-            cv::cvtColor(ga_channels[0], img, cv::COLOR_GRAY2BGRA);
-            cv::split(img, bgra_channels);
-            bgra_channels[3] = ga_channels[1];
-            cv::merge(bgra_channels, img);
-          }
-          break;
-
-        case 3:
-          cv::cvtColor(_imgs[i], img, cv::COLOR_BGR2BGRA);
-          break;
-
-        default:
-          img = _imgs[i];
-          break;
-      }
-
-      WebPPicture frame;
-      WebPPictureInit(&frame);
-      frame.use_argb = 1;
-      frame.argb = (uint32_t *) img.data;
-      frame.argb_stride = img.step / 4;
-      frame.width = img.cols;
-      frame.height = img.rows;
-
-      if (!WebPAnimEncoderAdd(encoder.get(), &frame, timestamp, &config)) {
-        _last_error = "Failed to add frame "
-          + std::to_string(i)
-          + " to WebP animation. "
-          + WebPAnimEncoderGetError(encoder.get());
-        return false;
-      }
-
-      timestamp += _delays[i];
-    }
-    if (!WebPAnimEncoderAdd(encoder.get(), nullptr, timestamp, nullptr)) {
-        _last_error = "Failed to add last timestamp to WebP animation";
-        return false;
-    }
-
-    WebPData data;
-    WebPDataInit(&data);
-    if (!WebPAnimEncoderAssemble(encoder.get(), &data)) {
-      WebPDataClear(&data);
-      _last_error = "Failed to assemble WebP animation";
-      return false;
-    }
-
-    output_buffer.resize(data.size);
-    memcpy(output_buffer.data(), data.bytes, data.size);
-    WebPDataClear(&data);
-
-    return true;
-  }
-
-  bool _encodegifimage(std::vector<uint8_t> &output_buffer) {
-    MsfGifState gif_state;
-    if (!msf_gif_begin(&gif_state, _imgs[0].cols, _imgs[0].rows)) {
-      _last_error = "Failed to initialize GIF writer";
-      return false;
-    }
-
-    int delay_error = 0;
-    for (size_t i = 0; i < _imgs.size(); i++) {
-      cv::Mat img;
-
-      switch (_imgs[i].channels()) {
-        case 1:
-          cv::cvtColor(_imgs[i], img, cv::COLOR_GRAY2BGRA);
-          break;
-
-        case 2:
-          {
-            std::vector<cv::Mat> ga_channels, bgra_channels;
-            cv::split(_imgs[i], ga_channels);
-            cv::cvtColor(ga_channels[0], img, cv::COLOR_GRAY2BGRA);
-            cv::split(img, bgra_channels);
-            bgra_channels[3] = ga_channels[1];
-            cv::merge(bgra_channels, img);
-          }
-          break;
-
-        case 3:
-          cv::cvtColor(_imgs[i], img, cv::COLOR_BGR2BGRA);
-          break;
-
-        default:
-          img = _imgs[i];
-          break;
-      }
-
-      // Convert milliseconds to centiseconds
-      int delay = _delays[i];
-      delay_error += delay % 10;
-      delay /= 10;
-      if (delay_error >= 10) {
-        delay += 1;
-        delay_error -= 10;
-      }
-      if (!msf_gif_frame(&gif_state,
-            img.data,
-            delay,
-            16,
-            img.step)) {
-        _last_error = "Failed to add frame " + std::to_string(i);
-        return false;
-      }
-    }
-
-    MsfGifResult result = msf_gif_end(&gif_state);
-    bool success = result.data != nullptr;
-    if (success) {
-      output_buffer.resize(result.dataSize);
-      memcpy(output_buffer.data(), result.data, result.dataSize);
-    }
-
-    msf_gif_free(result);
-    return success;
-  }
-
-  bool _encodeheifimage(heif_compression_format heif_format,
-      std::vector<uint8_t> &output_buffer,
-      bool lossless) {
-
-    heif_error error;
-
-    std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
-      heif_context_alloc(), &heif_context_free);
-
-    std::unique_ptr<heif_encoder, decltype(&heif_encoder_release)> encoder(
-      nullptr,
-      &heif_encoder_release);
-    heif_encoder *raw_encoder;
-
-    // Force pick AOM for AVIF images, as it supports lossless encoding
-    if (heif_compression_AV1 == heif_format) {
-      error = heif_context_get_encoder(context.get(),
-          _aom_descriptor,
-          &raw_encoder);
-    }
-    else {
-      error = heif_context_get_encoder_for_format(context.get(),
-          heif_format,
-          &raw_encoder);
-    }
-    encoder.reset(raw_encoder);
-    if (error.code != heif_error_Ok) {
-      _last_error = "Heif encoding creation: "
-        + std::string(error.message);
-      return false;
-    }
-
-    std::unique_ptr<heif_encoding_options,
-      decltype(&heif_encoding_options_free)>
-      options(nullptr, &heif_encoding_options_free);
-    std::unique_ptr<heif_color_profile_nclx,
-      decltype(&heif_nclx_color_profile_free)>
-      nclx(nullptr, &heif_nclx_color_profile_free);
-
-    if (lossless) {
-      heif_encoder_set_lossless(encoder.get(), 1);
-      heif_encoder_set_parameter(encoder.get(), "chroma", "444");
-
-      nclx.reset(heif_nclx_color_profile_alloc());
-      // Only set version 1 fields
-      nclx->matrix_coefficients = heif_matrix_coefficients_RGB_GBR;
-      nclx->transfer_characteristics =
-        heif_transfer_characteristic_unspecified;
-      nclx->color_primaries = heif_color_primaries_unspecified;
-      nclx->full_range_flag = 1;
-
-      options.reset(heif_encoding_options_alloc());
-      options->output_nclx_profile = nclx.get();
-
-    }
-    else {
-      int quality = -1 == _compression_quality?
-        AVIF_DEFAULT_QUALITY : _compression_quality;
-      heif_encoder_set_lossy_quality(encoder.get(), quality);
-    }
-
-    heif_colorspace colorspace = _imgs[0].channels() >= 3?
-      heif_colorspace_RGB : heif_colorspace_monochrome;
-    heif_chroma chroma = _imgs[0].channels() >= 3?
-      heif_chroma_444 : heif_chroma_monochrome;
-
-    heif_channel channel_map[][4] = {
-      {heif_channel_Y},
-      {heif_channel_Y, heif_channel_Alpha},
-      {heif_channel_B, heif_channel_G, heif_channel_R},
-      {heif_channel_B, heif_channel_G, heif_channel_R, heif_channel_Alpha},
-    };
-
-    std::unique_ptr<heif_image, decltype(&heif_image_release)> image(
-      nullptr,
-      &heif_image_release);
-    heif_image *raw_image;
-    error = heif_image_create(_imgs[0].cols,
-        _imgs[0].rows,
-        colorspace,
-        chroma,
-        &raw_image);
-    image.reset(raw_image);
-    if (error.code != heif_error_Ok) {
-      _last_error = "Heif image creation: "
-        + std::string(error.message);
-      return false;
-    }
-
-    std::vector<cv::Mat> channel_mats;
-    for (int i = 0; i < _imgs[0].channels(); i++) {
-      heif_channel channel_type = channel_map[_imgs[0].channels()-1][i];
-
-      error = heif_image_add_plane(image.get(),
-          channel_type,
-          _imgs[0].cols,
-          _imgs[0].rows,
-          8);
-      if (error.code != heif_error_Ok) {
-        _last_error = "Heif plane addition: "
-          + std::string(error.message);
-        return false;
-      }
-
-      int stride;
-      uint8_t *data = heif_image_get_plane(image.get(), channel_type, &stride);
-      channel_mats.emplace_back(_imgs[0].rows,
-          _imgs[0].cols,
-          CV_8UC1,
-          data,
-          stride);
-    }
-
-    int trivial_fromto[] = {0, 0, 1, 1, 2, 2, 3, 3};
-    cv::mixChannels(&_imgs[0],
-        1,
-        channel_mats.data(),
-        channel_mats.size(),
-        trivial_fromto,
-        _imgs[0].channels());
-
-    error = heif_context_encode_image(context.get(),
-        image.get(),
-        encoder.get(),
-        options.get(),
-        nullptr);
-    if (error.code != heif_error_Ok) {
-      _last_error = "Heif image encoding: "
-        + std::string(error.message);
-      return false;
-    }
-
-    heif_writer simple_ram_copier;
-    simple_ram_copier.writer_api_version = 1;
-    simple_ram_copier.write = []
-      (heif_context *ctx, const void *data, size_t size, void *userdata) {
-        (void) ctx;
-
-        std::vector<uint8_t> *buffer = (std::vector<uint8_t> *) userdata;
-        buffer->resize(size);
-        std::memcpy(buffer->data(), data, size);
-
-        heif_error error;
-        error.code = heif_error_Ok;
-        return error;
-      };
-
-    error = heif_context_write(context.get(),
-        &simple_ram_copier,
-        &output_buffer);
-    if (error.code != heif_error_Ok) {
-      _last_error = "Heif context writing: "
-        + std::string(error.message);
-      return false;
     }
 
     return true;
@@ -1569,7 +1167,6 @@ public:
   }
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = nullptr;
-const heif_encoder_descriptor *Photon_OpenCV::_aom_descriptor = nullptr;
 
 extern "C" {
   PHPCPP_EXPORT void *get_module() {
