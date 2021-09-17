@@ -1,5 +1,5 @@
 class Decoder {
- public:
+public:
   Decoder() {};
   virtual bool loaded() = 0;
   virtual void reset() = 0;

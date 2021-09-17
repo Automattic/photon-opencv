@@ -1,11 +1,11 @@
 class Libheif_Decoder : public Decoder {
- private:
+protected:
   const std::string *_data;
   cv::Mat _frame;
   bool _ok;
   std::vector<uint8_t> _icc_profile;
   
- public:
+public:
   Libheif_Decoder(const std::string *data) {
     _data = data;
     reset();

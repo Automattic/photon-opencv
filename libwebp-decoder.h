@@ -1,11 +1,11 @@
 class LibWebP_Decoder : public Decoder {
- private:
+protected:
   const std::string *_data;
   std::unique_ptr<WebPAnimDecoder, decltype(&WebPAnimDecoderDelete)> _decoder;
   WebPAnimInfo _anim_info;
   int _last_ts;
   
- public:
+public:
   LibWebP_Decoder(const std::string *data) :
     _decoder(nullptr, &WebPAnimDecoderDelete) {
 

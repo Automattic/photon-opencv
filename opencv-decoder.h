@@ -1,10 +1,10 @@
 class OpenCV_Decoder : public Decoder {
- private:
+protected:
   const std::string *_data;
   cv::Mat _frame;
   bool _ok;
   
- public:
+public:
   OpenCV_Decoder(const std::string *data) {
     _data = data;
     reset();

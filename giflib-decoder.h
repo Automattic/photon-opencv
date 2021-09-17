@@ -1,5 +1,5 @@
 class Giflib_Decoder : public Decoder {
- private:
+protected:
   const std::string *_data;
   std::unique_ptr<GifFileType, void (*) (GifFileType *)> _gif;
   std::vector<uint8_t> _line;
@@ -8,7 +8,7 @@ class Giflib_Decoder : public Decoder {
   cv::Mat _previous_cache;
   static const cv::Vec4b _bg_scalar;
   
- public:
+public:
   Giflib_Decoder(const std::string *data) :
     _gif(nullptr, [] (GifFileType *gif) { DGifCloseFile(gif, nullptr); }) {
 
