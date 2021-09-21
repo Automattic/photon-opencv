@@ -6,6 +6,7 @@ protected:
   int _last_disposal;
   cv::Mat _canvas;
   cv::Mat _previous_cache;
+  std::pair<int, const std::string *> _offset_and_data;
   static const cv::Vec4b _bg_scalar;
   
 public:
@@ -21,9 +22,10 @@ public:
   }
 
   void reset() {
+    _offset_and_data = std::make_pair(0, _data);
+
     int error = GIF_OK;
-    std::pair<int, const std::string *> offset_and_data(0, _data);
-    GifFileType *raw_gif = DGifOpen(&offset_and_data,
+    GifFileType *raw_gif = DGifOpen(&_offset_and_data,
         [] (GifFileType *gif, GifByteType *buffer, int size) {
           std::pair<int, const std::string *> *user =
             (std::pair<int, const std::string *> *) gif->UserData;
