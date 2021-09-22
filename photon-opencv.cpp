@@ -38,19 +38,23 @@
 
 class Photon_OpenCV : public Php::Base {
 protected:
-  std::vector<cv::Mat> _imgs;
-  std::vector<int> _delays;
+  cv::Mat _img;
+  int _delay;
   std::string _last_error;
   std::string _format;
   int _type;
   int _compression_quality;
   std::vector<uint8_t> _icc_profile;
   std::string _raw_image_data;
-  int _header_width;
-  int _header_height;
+  int _expected_width;
+  int _expected_height;
   int _header_channels;
+  bool _force_reencode;
+  bool _animation_decoder;
   Exiv2::Value::AutoPtr _original_orientation;
   std::map<std::string, std::string> _image_options;
+  std::vector<std::function<void()>> _operations;
+  std::unique_ptr<Decoder> _decoder;
 
   const int WEBP_DEFAULT_QUALITY = 75;
   const int AVIF_DEFAULT_QUALITY = 75;
@@ -60,11 +64,11 @@ protected:
   static cmsHPROFILE _srgb_profile;
 
   void _enforce8u() {
-    if (CV_8U != _imgs[0].depth()) {
+    if (CV_8U != _img.depth()) {
       /* Proper convertion is mostly guess work, but it's fairly rare and
          these are reasonable assumptions */
       double alpha, beta;
-      switch (_imgs[0].depth()) {
+      switch (_img.depth()) {
         case CV_16U:
           alpha = 1./256;
           beta = 0;
@@ -86,9 +90,7 @@ protected:
           break;
       }
 
-      for (auto &img : _imgs) {
-        img.convertTo(img, CV_8U, alpha, beta);
-      }
+      _img.convertTo(_img, CV_8U, alpha, beta);
     }
   }
 
@@ -107,7 +109,7 @@ protected:
 
     int storage_format;
     int num_intensity_channels;
-    switch (_imgs[0].channels()) {
+    switch (_img.channels()) {
       case 1:
       case 2:
         storage_format = TYPE_GRAY_8;
@@ -143,48 +145,42 @@ protected:
 
     /* Alpha optimizations using `reshape()` require continuous data.
        If necessary, this can be optimized out for images without alpha */
-    for (auto &img : _imgs) {
-      if (!img.isContinuous()) {
-        img = img.clone();
-      }
+    if (!_img.isContinuous()) {
+      _img = _img.clone();
     }
 
     int output_type = _imagehasalpha()? CV_8UC4 : CV_8UC3;
-    for (auto &img : _imgs) {
-      cv::Mat transformed_img = cv::Mat(img.rows, img.cols, output_type);
+    cv::Mat transformed_img = cv::Mat(_img.rows, _img.cols, output_type);
 
-      /* The sRGB profile can't handle the alpha channel. We make sure it's
-         skipped when applying the profile */
-      cv::Mat no_alpha_img = img.
-        reshape(1, img.rows*img.cols).
-        colRange(0, num_intensity_channels);
-      cv::Mat no_alpha_transformed_img = transformed_img.
+    /* The sRGB profile can't handle the alpha channel. We make sure it's
+       skipped when applying the profile */
+    cv::Mat no_alpha_img = _img.
+      reshape(1, _img.rows*_img.cols).
+      colRange(0, num_intensity_channels);
+    cv::Mat no_alpha_transformed_img = transformed_img.
+      reshape(1, transformed_img.rows*transformed_img.cols).
+      colRange(0, 3);
+
+    cmsDoTransformLineStride(
+        transform,
+        no_alpha_img.data, no_alpha_transformed_img.data,
+        no_alpha_img.cols/num_intensity_channels, no_alpha_img.rows,
+        no_alpha_img.step, no_alpha_transformed_img.step,
+        0, 0
+    );
+    cmsDeleteTransform(transform);
+
+    if (_imagehasalpha()) {
+      /* Copy the original alpha information */
+      cv::Mat alpha_only_img = _img.reshape(1, _img.rows*_img.cols).
+        colRange(num_intensity_channels, num_intensity_channels+1);
+      cv::Mat alpha_only_transformed_img = transformed_img.
         reshape(1, transformed_img.rows*transformed_img.cols).
-        colRange(0, 3);
-
-      cmsDoTransformLineStride(
-          transform,
-          no_alpha_img.data, no_alpha_transformed_img.data,
-          no_alpha_img.cols/num_intensity_channels, no_alpha_img.rows,
-          no_alpha_img.step, no_alpha_transformed_img.step,
-          0, 0
-      );
-      cmsDeleteTransform(transform);
-
-      if (_imagehasalpha()) {
-        /* Copy the original alpha information */
-        cv::Mat alpha_only_img = img.reshape(1, img.rows*img.cols).
-          colRange(num_intensity_channels, num_intensity_channels+1);
-        cv::Mat alpha_only_transformed_img = transformed_img.
-          reshape(1, transformed_img.rows*transformed_img.cols).
-          colRange(3, 4);
-        alpha_only_img.copyTo(alpha_only_transformed_img);
-      }
-
-      img = transformed_img;
+        colRange(3, 4);
+      alpha_only_img.copyTo(alpha_only_transformed_img);
     }
 
-    _icc_profile.clear();
+    _img = transformed_img;
 
     return true;
   }
@@ -227,45 +223,41 @@ protected:
 
   bool _imagehasalpha() {
     /* Even number of channels means it's either GA or BGRA */
-    int num_channels = _imgs.empty()? _header_channels : _imgs[0].channels();
+    int num_channels = _img.empty()? _header_channels : _img.channels();
     return !(num_channels & 1);
   }
 
   /* Assumes alpha is the last channel */
   void _associatealpha() {
-    for (auto &img : _imgs) {
-      /* Continuity required for `reshape()` */
-      if (!img.isContinuous()) {
-        img = img.clone();
-      }
+    /* Continuity required for `reshape()` */
+    if (!_img.isContinuous()) {
+      _img = _img.clone();
+    }
 
-      int alpha_channel = img.channels()-1;
-      cv::Mat alpha = img.reshape(1, img.rows*img.cols).
-        colRange(alpha_channel, alpha_channel+1);
+    int alpha_channel = _img.channels()-1;
+    cv::Mat alpha = _img.reshape(1, _img.rows*_img.cols).
+      colRange(alpha_channel, alpha_channel+1);
 
-      for (int i = 0; i < alpha_channel; i++) {
-        cv::Mat color = img.reshape(1, img.rows*img.cols).colRange(i, i+1);
-        cv::multiply(color, alpha, color, 1./255);
-      }
+    for (int i = 0; i < alpha_channel; i++) {
+      cv::Mat color = _img.reshape(1, _img.rows*_img.cols).colRange(i, i+1);
+      cv::multiply(color, alpha, color, 1./255);
     }
   }
 
   /* Assumes alpha is the last channel */
   void _dissociatealpha() {
-    for (auto &img : _imgs) {
-      /* Continuity required for `reshape()` */
-      if (!img.isContinuous()) {
-        img = img.clone();
-      }
+    /* Continuity required for `reshape()` */
+    if (!_img.isContinuous()) {
+      _img = _img.clone();
+    }
 
-      int alpha_channel = img.channels()-1;
-      cv::Mat alpha = img.reshape(1, img.rows*img.cols).
-        colRange(alpha_channel, alpha_channel+1);
+    int alpha_channel = _img.channels()-1;
+    cv::Mat alpha = _img.reshape(1, _img.rows*_img.cols).
+      colRange(alpha_channel, alpha_channel+1);
 
-      for (int i = 0; i < alpha_channel; i++) {
-        cv::Mat color = img.reshape(1, img.rows*img.cols).colRange(i, i+1);
-        cv::divide(color, alpha, color, 255.);
-      }
+    for (int i = 0; i < alpha_channel; i++) {
+      cv::Mat color = _img.reshape(1, _img.rows*_img.cols).colRange(i, i+1);
+      cv::divide(color, alpha, color, 255.);
     }
   }
 
@@ -274,36 +266,33 @@ protected:
       _associatealpha();
     }
 
-    for (auto &img : _imgs) {
-      cv::resize(img, img, cv::Size(width, height), 0, 0, filter);
-    }
+    cv::resize(_img, _img, cv::Size(width, height), 0, 0, filter);
 
     if (_imagehasalpha()) {
       _dissociatealpha();
     }
   }
 
-  bool _maybedecodeimage(bool silent=true) {
-    _checkimageloaded();
+  bool _setupdecoder(bool silent=true) {
+    _decoder.reset(new OpenCV_Decoder(&_raw_image_data));
+    _animation_decoder = false;
 
-    if (!_imgs.empty()) {
-      return true;
+    if (!_decoder->loaded()) {
+      _decoder.reset(new Giflib_Decoder(&_raw_image_data));
+      _animation_decoder = true;
+    }
+    if (!_decoder->loaded()) {
+      _decoder.reset(new LibWebP_Decoder(&_raw_image_data));
+      _animation_decoder = true;
+    }
+    if (!_decoder->loaded()) {
+      _decoder.reset(new Libheif_Decoder(&_raw_image_data));
+      _animation_decoder = false;
     }
 
-    std::unique_ptr<Decoder> decoder;
+    if (!_decoder->loaded()) {
+      _decoder.reset();
 
-    decoder.reset(new OpenCV_Decoder(&_raw_image_data));
-    if (!decoder->loaded()) {
-      decoder.reset(new Giflib_Decoder(&_raw_image_data));
-    }
-    if (!decoder->loaded()) {
-      decoder.reset(new LibWebP_Decoder(&_raw_image_data));
-    }
-    if (!decoder->loaded()) {
-      decoder.reset(new Libheif_Decoder(&_raw_image_data));
-    }
-
-    if (!decoder->loaded()) {
       std::string message = "Unable to decode image";
 
       if (!silent) {
@@ -314,26 +303,20 @@ protected:
       return false;
     }
 
-    cv::Mat img;
-    int delay;
-    while (decoder->get_next_frame(img, delay)) {
-      _imgs.push_back(img);
-      _delays.push_back(delay);
-    }
+    // This may be reworked once exiv2 supports all relevant formats
+    _decoder->get_icc_profile(_icc_profile);
 
-    if (_imgs.empty()) {
-      std::string message = "Zero images were retrieved from the input file";
+    return true;
+  }
 
+  bool _loadnextframe(bool silent=true) {
+    if (!_decoder->get_next_frame(_img, _delay)) {
       if (!silent) {
-        throw Php::Exception(message);
+        throw Php::Exception("Unable to load next frame");
       }
 
-      _last_error = message;
       return false;
     }
-
-    // This may be reworked once exiv2 supports all relevant formats
-    decoder->get_icc_profile(_icc_profile);
 
     _enforce8u();
     return true;
@@ -341,11 +324,12 @@ protected:
 
   bool _loadimagefromrawdata() {
     /* Clear image in case object is being reused */
-    _imgs.clear();
-    _delays.clear();
+    _img = cv::Mat();
+    _decoder.reset(nullptr);
     _icc_profile.clear();
     _image_options.clear();
     _compression_quality = -1;
+    _force_reencode = false;
 
     Exiv2::Image::AutoPtr exiv_img;
     try {
@@ -365,7 +349,9 @@ protected:
     catch(Exiv2::Error &error) {
       // Failing to read the metadata is not critical, but it requires us to
       // try to decode the image to get the proper information early
-      _maybedecodeimage(false);
+      _setupdecoder(false);
+      _loadnextframe(false);
+      _header_channels = _img.channels();
     }
 
     switch (exiv_img->imageType()) {
@@ -393,10 +379,14 @@ protected:
         break;
 
       default:
-        /* Default to jpeg, but disable lazy loading */
+        // Default to jpeg. Load the first frame early if we haven't already
         _format = "jpeg";
-        _maybedecodeimage(false);
-        _header_channels = -1;
+        _force_reencode = true;
+        if (_img.empty()) {
+          _setupdecoder(false);
+          _loadnextframe(false);
+          _header_channels = _img.channels();
+        }
         break;
     }
 
@@ -409,8 +399,8 @@ protected:
       _original_orientation = orientation_pos->getValue();
     }
 
-    _header_width = exiv_img->pixelWidth();
-    _header_height = exiv_img->pixelHeight();
+    _expected_width = _img.empty()? exiv_img->pixelWidth() : _img.rows;
+    _expected_height = _img.empty()? exiv_img->pixelHeight() : _img.cols;
 
     if (exiv_img->iccProfileDefined()) {
       const Exiv2::DataBuf *profile = exiv_img->iccProfile();
@@ -419,7 +409,7 @@ protected:
     }
 
     /* Palettes are automatically converted to RGB on decode */
-    switch (_imgs.empty()? _header_channels : _imgs[0].channels()) {
+    switch (_header_channels) {
       case 1:
         _type = IMGTYPE_GRAYSCALE;
         break;
@@ -486,7 +476,7 @@ protected:
     cv::Vec4b color;
 
     // Assumes 1 byte per channel
-    if (_imgs[0].channels() <= 2) {
+    if (_img.channels() <= 2) {
       color[0] = round(
           bgr_color[0]*.114 + bgr_color[1]*.587 + bgr_color[2]*.299);
       color[1] = 255;
@@ -502,10 +492,7 @@ protected:
   }
 
   void _forceaspectratio(int &width, int &height) {
-    int img_width = _imgs.empty()? _header_width : _imgs[0].cols;
-    int img_height = _imgs.empty()? _header_height : _imgs[0].rows ;
-
-    double img_ratio = (double) img_width / (double) img_height;
+    double img_ratio = (double) _expected_width / (double) _expected_height;
     double new_ratio = (double) width / (double) height;
 
     if (new_ratio > img_ratio) {
@@ -626,9 +613,6 @@ protected:
   }
 
   bool _encodeimage(std::vector<uint8_t> &output_buffer) {
-    /* OpenCV strips the profile, we need to apply it first */
-    _converttosrgb();
-
     int quality = _compression_quality;
     if (-1 == quality) {
       if ("jpeg" == _format) {
@@ -645,6 +629,10 @@ protected:
       }
     }
 
+    if (!_decoder.get() && !_setupdecoder()) {
+      return false;
+    }
+
     std::unique_ptr<Encoder> encoder;
     if ("avif" == _format) {
       encoder.reset(new Libheif_Encoder(
@@ -653,14 +641,14 @@ protected:
             &_image_options,
             &output_buffer));
     }
-    else if ("webp" == _format && _imgs.size() > 1) {
+    else if ("webp" == _format && _animation_decoder) {
       encoder.reset(new LibWebP_Encoder(
             _format,
             quality,
             &_image_options,
             &output_buffer));
     }
-    else if ("gif" == _format && _imgs.size() > 1) {
+    else if ("gif" == _format && _animation_decoder) {
       encoder.reset(new Msfgif_Encoder(
             _format,
             quality,
@@ -675,11 +663,28 @@ protected:
             &output_buffer));
     }
 
-    for (size_t i = 0; i < _imgs.size(); i++) {
-      if (!encoder->add_frame(_imgs[i], _delays[i])) {
+    if (_img.empty()) {
+      if (!_loadnextframe()) {
         return false;
       }
     }
+
+    do {
+      // Color profile gets silently stripped, apply it first
+      _converttosrgb();
+
+      for (auto &operation : _operations) {
+        operation();
+      }
+
+      if (!encoder->add_frame(_img, _delay)) {
+        return false;
+      }
+    } while (_loadnextframe());
+
+    _img = cv::Mat();
+    _decoder.reset(nullptr);
+
     if (!encoder->finalize()) {
       return false;
     }
@@ -714,6 +719,28 @@ protected:
     }
 
     return true;
+  }
+
+  void _rotate(int rotation) {
+    cv::rotate(_img, _img, rotation);
+  }
+
+  void _flip(int flip_code) {
+    cv::flip(_img, _img, flip_code);
+  }
+
+  void _crop(int x, int y, int width, int height) {
+    _img = _img(cv::Rect(x, y, width, height));
+  }
+
+  void _border(int width, int height, cv::Vec3b color) {
+    cv::Mat dst(_img.rows + height*2,
+      _img.cols + width*2,
+      _img.type(),
+      _bgrtoloadedimagetype(color));
+
+    _img.copyTo(dst(cv::Rect(width, height, _img.cols, _img.rows)));
+    _img = dst;
   }
 
 public:
@@ -791,7 +818,7 @@ public:
     }
 
     // No ops, we can return the original image
-    if (_imgs.empty()) {
+    if (!_force_reencode && _operations.empty()) {
       std::ofstream output(output_path,
           std::ios::out | std::ios::binary);
       output << _raw_image_data;
@@ -819,7 +846,7 @@ public:
     _checkimageloaded();
 
     // No ops, we can return the original image
-    if (_imgs.empty()) {
+    if (!_force_reencode && _operations.empty()) {
       return _raw_image_data;
     }
 
@@ -837,13 +864,12 @@ public:
 
   Php::Value getimagewidth() {
     _checkimageloaded();
-
-    return (_imgs.empty()? _header_width : _imgs[0].cols);
+    return _expected_width;
   }
 
   Php::Value getimageheight() {
     _checkimageloaded();
-    return (_imgs.empty()? _header_height : _imgs[0].rows);
+    return _expected_height;
   }
 
   Php::Value getimageformat() {
@@ -860,10 +886,7 @@ public:
       return;
     }
 
-    if (!_maybedecodeimage()) {
-      return;
-    }
-
+    _force_reencode = true;
     _format = new_format;
   }
 
@@ -879,9 +902,7 @@ public:
     std::string real_key = format + ":" + key;
     auto option = _image_options.find(real_key);
     if (option == _image_options.end() || option->second != value) {
-      if (!_maybedecodeimage()) {
-        return;
-      }
+      _force_reencode = true;
     }
 
     _image_options[real_key] = value;
@@ -930,31 +951,25 @@ public:
         break;
 
       case ORIENTATION_TOPRIGHT:
-        rotation = -1;
-        break;
-
       case ORIENTATION_TOPLEFT:
       default:
-        // noop
-        return;
-    }
-
-    if (!_maybedecodeimage()) {
-      return;
+        rotation = -1;
+        break;
     }
 
     if (-1 != rotation) {
-      for (auto &img : _imgs) {
-        cv::rotate(img, img, rotation);
+      _operations.push_back(std::bind(&Photon_OpenCV::_rotate,
+            this,
+            rotation));
+      if (cv::ROTATE_180 != rotation) {
+        std::swap(_expected_width, _expected_height);
       }
     }
     if (ORIENTATION_TOPRIGHT == orientation
         || ORIENTATION_BOTTOMLEFT == orientation
         || ORIENTATION_LEFTTOP == orientation
         || ORIENTATION_RIGHTBOTTOM == orientation) {
-      for (auto &img : _imgs) {
-        cv::flip(img, img, 1);
-      }
+      _operations.push_back(std::bind(&Photon_OpenCV::_flip, this, 1));
     }
 
     // Exif not reset intentionally, GraphicsMagick doesn't support it for Jpeg
@@ -964,21 +979,23 @@ public:
     std::string name = params[0].stringValue();
     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
 
-    if (!_maybedecodeimage()) {
-      return;
-    }
 
     if ("exif" == name) {
       if (!params[1].isNull()) {
         throw Php::Exception("Exif replacement unimplemented, only removal");
       }
+      _force_reencode = true;
       _original_orientation.release();
     }
     else if ("icc" == name) {
       if (params[1].isNull()) {
-        _icc_profile.clear();
+        if (_icc_profile.size()) {
+          _force_reencode = true;
+          _icc_profile.clear();
+        }
       }
       else {
+        _force_reencode = true;
         std::string new_icc = params[1].stringValue();
         _icc_profile.resize(new_icc.size());
         memcpy(_icc_profile.data(), new_icc.data(), _icc_profile.size());
@@ -1014,18 +1031,18 @@ public:
     }
 
     /* Explicitly skip if it's a noop. */
-    int img_width = _imgs.empty()? _header_width : _imgs[0].cols;
-    int img_height = _imgs.empty()? _header_height : _imgs[0].rows ;
-    if (width == img_width && height == img_height) {
+    if (width == _expected_width && height == _expected_height) {
       return;
     }
 
-    if (!_maybedecodeimage()) {
-      return;
-    }
+    _operations.push_back(std::bind(&Photon_OpenCV::_transparencysaferesize,
+          this,
+          width,
+          height,
+          _gmagickfilter2opencvinter(filter, default_filter)));
 
-    _transparencysaferesize(width, height,
-        _gmagickfilter2opencvinter(filter, default_filter));
+    _expected_width = width;
+    _expected_height = height;
   }
 
   /* Documentation is lacking, but scaleimage is resizeimage with
@@ -1042,17 +1059,18 @@ public:
     }
 
     /* Explicitly skip if it's a noop. */
-    int img_width = _imgs.empty()? _header_width : _imgs[0].cols;
-    int img_height = _imgs.empty()? _header_height : _imgs[0].rows ;
-    if (width == img_width && height == img_height) {
+    if (width == _expected_width && height == _expected_height) {
       return;
     }
 
-    if (!_maybedecodeimage()) {
-      return;
-    }
+    _operations.push_back(std::bind(&Photon_OpenCV::_transparencysaferesize,
+          this,
+          width,
+          height,
+          cv::INTER_AREA));
 
-    _transparencysaferesize(width, height, cv::INTER_AREA);
+    _expected_width = width;
+    _expected_height = height;
   }
 
   void cropimage(Php::Parameters &params) {
@@ -1069,25 +1087,25 @@ public:
       std::swap(y, y2);
     }
 
-    int width = _imgs.empty()? _header_width : _imgs[0].cols;
-    int height = _imgs.empty()? _header_height : _imgs[0].rows ;
-    x = std::max(0, std::min(x, width));
-    y = std::max(0, std::min(y, height));
-    x2 = std::max(0, std::min(x2, width));
-    y2 = std::max(0, std::min(y2, height));
+    x = std::max(0, std::min(x, _expected_width));
+    y = std::max(0, std::min(y, _expected_height));
+    x2 = std::max(0, std::min(x2, _expected_width));
+    y2 = std::max(0, std::min(y2, _expected_height));
 
-    /* Prevent image from being loaded if it's a noop */
-    if (!x && !y && x2 == _header_width && y2 == _header_height) {
+    // Prevent image from being loaded if it's a noop
+    if (!x && !y && x2 == _expected_width && y2 == _expected_height) {
       return;
     }
 
-    if (!_maybedecodeimage()) {
-      return;
-    }
+    _operations.push_back(std::bind(&Photon_OpenCV::_crop,
+          this,
+          x,
+          y,
+          x2-x,
+          y2-y));
 
-    for (auto &img : _imgs) {
-      img = img(cv::Rect(x, y, x2-x, y2-y));
-    }
+    _expected_width = x2-x;
+    _expected_height = y2-y;
   }
 
   void rotateimage(Php::Parameters &params) {
@@ -1115,12 +1133,12 @@ public:
         throw Php::Exception("Unsupported rotation angle");
     }
 
-    if (!_maybedecodeimage()) {
-      return;
-    }
+    _operations.push_back(std::bind(&Photon_OpenCV::_rotate,
+          this,
+          rotation_constant));
 
-    for (auto &img : _imgs) {
-      cv::rotate(img, img, rotation_constant);
+    if (cv::ROTATE_180 != rotation_constant) {
+      std::swap(_expected_width, _expected_height);
     }
   }
 
@@ -1151,19 +1169,14 @@ public:
       throw Php::Exception("Unrecognized color string");
     }
 
-    if (!_maybedecodeimage()) {
-      return;
-    }
+    _operations.push_back(std::bind(&Photon_OpenCV::_border,
+          this,
+          width,
+          height,
+          bgr_color));
 
-    for (auto &img : _imgs) {
-      cv::Mat dst(img.rows + height*2,
-        img.cols + width*2,
-        img.type(),
-        _bgrtoloadedimagetype(bgr_color));
-
-      img.copyTo(dst(cv::Rect(width, height, img.cols, img.rows)));
-      img = dst;
-    }
+    _expected_width += width*2;
+    _expected_height += height*2;
   }
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = nullptr;
