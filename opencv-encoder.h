@@ -43,7 +43,6 @@ public:
       auto lossless_option = _options->find("webp:lossless");
 
       img_parameters.push_back(cv::IMWRITE_WEBP_QUALITY);
-      img_parameters.push_back(_quality);
       if (lossless_option != _options->end()
           && "true" == lossless_option->second) {
         img_parameters.push_back(101);
