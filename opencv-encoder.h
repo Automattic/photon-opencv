@@ -52,7 +52,6 @@ public:
       }
     }
 
-    std::string failure_details;
     bool encoded = false;
     try {
       encoded = cv::imencode("." + _format,
