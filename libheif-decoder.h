@@ -96,7 +96,7 @@ public:
   }
 
   bool get_icc_profile(std::vector<uint8_t> &dst) {
-    std::copy(_icc_profile.begin(), dst.begin(), std::back_inserter(dst));
+    dst.assign(_icc_profile.begin(), _icc_profile.end());
     return true;
   }
 };
