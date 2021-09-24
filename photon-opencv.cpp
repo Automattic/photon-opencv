@@ -898,12 +898,7 @@ public:
     std::transform(key.begin(), key.end(), key.begin(), ::tolower);
 
     std::string value = params[2].stringValue();
-
     std::string real_key = format + ":" + key;
-    auto option = _image_options.find(real_key);
-    if (option == _image_options.end() || option->second != value) {
-      _force_reencode = true;
-    }
 
     _image_options[real_key] = value;
   }
@@ -984,7 +979,13 @@ public:
       if (!params[1].isNull()) {
         throw Php::Exception("Exif replacement unimplemented, only removal");
       }
-      _force_reencode = true;
+      // Don't force reencoding if it results in no visible change
+      int orientation = _original_orientation.get()?
+        _original_orientation.get()->toLong() : 0;
+      // All valid values except TOPLEFT
+      if (orientation > 1 && orientation <= 8) {
+        _force_reencode = true;
+      }
       _original_orientation.release();
     }
     else if ("icc" == name) {
