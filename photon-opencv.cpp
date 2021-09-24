@@ -399,8 +399,8 @@ protected:
       _original_orientation = orientation_pos->getValue();
     }
 
-    _expected_width = _img.empty()? exiv_img->pixelWidth() : _img.rows;
-    _expected_height = _img.empty()? exiv_img->pixelHeight() : _img.cols;
+    _expected_width = _img.empty()? exiv_img->pixelWidth() : _img.cols;
+    _expected_height = _img.empty()? exiv_img->pixelHeight() : _img.rows;
 
     if (exiv_img->iccProfileDefined()) {
       const Exiv2::DataBuf *profile = exiv_img->iccProfile();
