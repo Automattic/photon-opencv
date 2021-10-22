@@ -630,7 +630,12 @@ protected:
     }
 
     if (!_decoder.get() && !_setupdecoder()) {
-      return false;
+      // Compatibility: silently replace image with original if we are unable
+      // to decode this late in the process
+      _last_error.clear();
+      output_buffer.assign(_raw_image_data.begin(), _raw_image_data.end());
+
+      return true;
     }
 
     std::unique_ptr<Encoder> encoder;
