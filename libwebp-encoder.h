@@ -28,7 +28,19 @@ protected:
     webp_options.minimize_size = minimize_requested;
 
     // Lower is faster, higher is slower, but better (range: [0-6])
+    // Default to auto select, unless option is set explicitly and correctly
     int method = minimize_requested? 4 : 1;
+    auto encoding_effort_option = _options->find("webp:encoding_effort");
+    if (encoding_effort_option != _options->end()) {
+      try {
+        int encoding_effort = stoi(encoding_effort_option->second);
+        if (encoding_effort >= 0 && encoding_effort <= 6) {
+          method = encoding_effort;
+        }
+      }
+      catch (const std::invalid_argument &e) {
+      }
+    }
 
     _encoder.reset(WebPAnimEncoderNew(frame.cols, frame.rows, &webp_options));
     if (!_encoder.get()) {
