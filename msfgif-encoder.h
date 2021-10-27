@@ -39,7 +39,6 @@ public:
     }
 
     if (!_initialized && !_init_state(frame)) {
-      printf("FAHLOU EM INI\n");
       return false;
     }
 
@@ -82,7 +81,6 @@ public:
           delay,
           16,
           img.step)) {
-      printf("FAHLOU EM ADD\n");
       return false;
     }
 
@@ -103,7 +101,5 @@ public:
 
     msf_gif_free(result);
     return success;
-
-    return true;
   }
 };
