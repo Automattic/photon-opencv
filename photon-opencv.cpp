@@ -290,14 +290,16 @@ protected:
       fh = height - fy;
     }
 
-    if (_preserve_palette) {
+    bool consistent_sampling_required =
+      (_decoder.get() && _decoder->provides_animation()) || _preserve_palette;
+    if (consistent_sampling_required) {
       // Ensure border data doesn't turn into garbage
       if (fw && (int) ((fx + 0.5) / width_mul) < _frame.x) {
         fx++;
         fw--;
       }
       if (fw &&
-          (int) ((fx + fw - 0.5) / width_mul) >= _frame.x+ _frame.img.cols) {
+          (int) ((fx + fw - 0.5) / width_mul) >= _frame.x + _frame.img.cols) {
         fw--;
       }
       if (fh && (int) ((fy + 0.5) / height_mul) < _frame.y) {
@@ -317,7 +319,7 @@ protected:
       return;
     }
 
-    if (!_preserve_palette) {
+    if (!consistent_sampling_required) {
       if (_imagehasalpha()) {
         _associatealpha();
       }
