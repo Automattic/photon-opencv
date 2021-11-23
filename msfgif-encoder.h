@@ -102,11 +102,11 @@ public:
 
     if (!img.empty()) {
       cv::Mat dst = bg(cv::Rect(frame.x, frame.y, img.cols, img.rows));
-      if (Frame::BLENDING_NO_BLEND == frame.blending) {
-        img.copyTo(dst);
+      if (Frame::BLENDING_BLEND == frame.blending) {
+        _composite(dst, img);
       }
       else {
-        _composite(dst, img);
+        img.copyTo(dst);
       }
     }
     img = bg;
