@@ -8,7 +8,7 @@ protected:
   WebPConfig _config;
   int _timestamp;
 
-  bool _init_encoder(const cv::Mat &frame) {
+  bool _init_encoder(const Frame &frame) {
     WebPAnimEncoderOptions webp_options;
     WebPAnimEncoderOptionsInit(&webp_options);
 
@@ -42,7 +42,9 @@ protected:
       }
     }
 
-    _encoder.reset(WebPAnimEncoderNew(frame.cols, frame.rows, &webp_options));
+    _encoder.reset(WebPAnimEncoderNew(frame.img.cols,
+          frame.img.rows,
+          &webp_options));
     if (!_encoder.get()) {
       return false;
     }
@@ -72,7 +74,7 @@ public:
   }
 
 
-  bool add_frame(const cv::Mat &frame, int delay) {
+  bool add_frame(const Frame &frame) {
     if ("webp" != _format) {
       return false;
     }
@@ -82,15 +84,15 @@ public:
     }
 
     cv::Mat img;
-    switch (frame.channels()) {
+    switch (frame.img.channels()) {
       case 1:
-        cv::cvtColor(frame, img, cv::COLOR_GRAY2BGRA);
+        cv::cvtColor(frame.img, img, cv::COLOR_GRAY2BGRA);
         break;
 
       case 2:
         {
           std::vector<cv::Mat> ga_channels, bgra_channels;
-          cv::split(frame, ga_channels);
+          cv::split(frame.img, ga_channels);
           cv::cvtColor(ga_channels[0], img, cv::COLOR_GRAY2BGRA);
           cv::split(img, bgra_channels);
           bgra_channels[3] = ga_channels[1];
@@ -99,11 +101,11 @@ public:
         break;
 
       case 3:
-        cv::cvtColor(frame, img, cv::COLOR_BGR2BGRA);
+        cv::cvtColor(frame.img, img, cv::COLOR_BGR2BGRA);
         break;
 
       default:
-        img = frame;
+        img = frame.img;
         break;
     }
 
@@ -119,7 +121,7 @@ public:
       return false;
     }
 
-    _timestamp += delay;
+    _timestamp += frame.delay;
 
     return true;
   }

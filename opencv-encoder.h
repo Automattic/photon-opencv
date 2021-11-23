@@ -18,9 +18,7 @@ public:
     _output->clear();
   }
 
-  bool add_frame(const cv::Mat &frame, int delay) {
-    (void) delay;
-
+  bool add_frame(const Frame &frame) {
     if (_output->size()) {
       return false;
     }
@@ -55,7 +53,7 @@ public:
     bool encoded = false;
     try {
       encoded = cv::imencode("." + _format,
-          frame,
+          frame.img,
           *_output,
           img_parameters);
     }

@@ -2,12 +2,10 @@ class Giflib_Decoder : public Decoder {
 protected:
   const std::string *_data;
   std::unique_ptr<GifFileType, void (*) (GifFileType *)> _gif;
-  std::vector<uint8_t> _line;
-  int _last_disposal;
-  cv::Mat _canvas;
-  cv::Mat _previous_cache;
   std::pair<int, const std::string *> _offset_and_data;
-  static const cv::Vec4b _bg_scalar;
+  std::shared_ptr<Gif_Palette> _global_palette;
+  int _loops;
+  bool _can_read_loops;
   
 public:
   Giflib_Decoder(const std::string *data) :
@@ -45,19 +43,25 @@ public:
       return;
     }
 
+    if (raw_gif->SColorMap) {
+      ColorMapObject *raw_palette = GifMakeMapObject(
+          raw_gif->SColorMap->ColorCount,
+          raw_gif->SColorMap->Colors);
+
+      if (!raw_palette) {
+        return;
+      }
+
+      _global_palette.reset(new Gif_Palette(raw_palette));
+    }
+
     _gif.reset(raw_gif);
-
-    _line.resize(_gif->SWidth);
-    _last_disposal = DISPOSAL_UNSPECIFIED;
-
-    _canvas = cv::Mat(_gif->SHeight,
-        _gif->SWidth,
-        CV_8UC4,
-        _bg_scalar);
+    _can_read_loops = true;
+    _loops = 1;
   }
 
-  bool get_next_frame(cv::Mat &dst, int &delay) {
-    dst = cv::Mat();
+  bool get_next_frame(Frame &dst) {
+    dst.img = cv::Mat();
 
     GraphicsControlBlock gcb;
     gcb.DisposalMode = DISPOSAL_UNSPECIFIED;
@@ -83,10 +87,23 @@ public:
           // GCB doesn't get overwritten if this fails
           DGifExtensionToGCB(data[0], data+1, &gcb);
         }
+        else if (APPLICATION_EXT_FUNC_CODE == code) {
+          if (_can_read_loops &&
+              11 == data[0] &&
+              !memcmp("NETSCAPE2.0", data+1, 11)) {
+            if (GIF_ERROR != DGifGetExtensionNext(_gif.get(), &data) &&
+                3 == data[0] &&
+                1 == data[1]) {
+              _loops = data[2] | (data[3] << 8);
+            }
+          }
+        }
 
         while (data && GIF_ERROR != DGifGetExtensionNext(_gif.get(), &data));
       }
       else if (IMAGE_DESC_RECORD_TYPE == type) {
+        _can_read_loops = false;
+
         if (GIF_ERROR == DGifGetImageDesc(_gif.get())) {
           continue;
         }
@@ -102,29 +119,26 @@ public:
           continue;
         }
 
-        if (_last_disposal == DISPOSE_BACKGROUND) {
-          if (_gif->ImageCount > 1) {
-            const auto &p_desc =
-              _gif->SavedImages[_gif->ImageCount-2].ImageDesc;
-            cv::rectangle(_canvas,
-                cv::Rect(p_desc.Left, p_desc.Top, p_desc.Width, p_desc.Height),
-                _bg_scalar,
-                -1);
-          }
-          _canvas.copyTo(_previous_cache);
-        }
-        else if (_last_disposal == DISPOSE_PREVIOUS) {
-          _previous_cache.copyTo(_canvas);
-        }
-        else {
-          _canvas.copyTo(_previous_cache);
-        }
+        dst.img = cv::Mat(desc.Height,
+            desc.Width,
+            CV_8UC4,
+            cv::Vec4b(0, 0, 0, 0));
 
-        cv::Mat roi(_canvas,
-            cv::Rect(desc.Left, desc.Top, desc.Width, desc.Height));
         auto *color_map = desc.ColorMap? desc.ColorMap : _gif->SColorMap;
         if (!color_map) {
           continue;
+        }
+
+        dst.gif_global_palette = _global_palette;
+        if (desc.ColorMap) {
+          auto raw_palette = GifMakeMapObject(desc.ColorMap->ColorCount,
+              desc.ColorMap->Colors);
+
+          if (!raw_palette) {
+            return false;
+          }
+
+          dst.gif_frame_palette.reset(new Gif_Palette(raw_palette));
         }
 
         // Initialize with interlaced values
@@ -136,35 +150,61 @@ public:
           row_jumps[0] = row_jumps[1] = row_jumps[2] = row_jumps[3] = 1;
         }
 
+        std::vector<uint8_t> line(desc.Width);
         for (int i = 0; i < 4; i++) {
           for (int y = row_offsets[i]; y < desc.Height; y += row_jumps[i]) {
+            cv::Vec4b *row = (cv::Vec4b *) (dst.img.data + y * dst.img.step);
+
             // Silently ignore failed reads
-            DGifGetLine(_gif.get(), _line.data(), desc.Width);
+            DGifGetLine(_gif.get(), line.data(), desc.Width);
             for (int x = 0; x < desc.Width; x++) {
-              if (_line[x] == gcb.TransparentColor) {
+              if (line[x] == gcb.TransparentColor) {
                 continue;
               }
 
-              auto c = color_map->Colors[_line[x]];
-              roi.at<cv::Vec4b>(y, x) = cv::Vec4b(c.Blue, c.Green, c.Red, 255);
+              auto c = color_map->Colors[line[x]];
+              row[x] = cv::Vec4b(c.Blue, c.Green, c.Red, 255);
             }
           }
         }
 
+        dst.x = desc.Left;
+        dst.y = desc.Top;
+
         // Success. Break early so next calls gets the next frame
-        _canvas.copyTo(dst);
         break;
       }
     } while (TERMINATE_RECORD_TYPE != type);
 
-    if (!dst.empty()) {
-      _last_disposal = gcb.DisposalMode;
-    }
+    dst.delay = gcb.DelayTime * 10;
+    dst.canvas_width = _gif->SWidth;
+    dst.canvas_height = _gif->SHeight;
+    dst.empty = dst.img.empty();
+    dst.loops = _loops;
+    dst.blending = Frame::BLENDING_BLEND;
+    switch (gcb.DisposalMode) {
+      case DISPOSE_BACKGROUND:
+        dst.disposal = Frame::DISPOSAL_BACKGROUND;
+        break;
 
-    delay = gcb.DelayTime * 10;
-    return !dst.empty();
+      case DISPOSE_PREVIOUS:
+        dst.disposal = Frame::DISPOSAL_PREVIOUS;
+        break;
+
+      default:
+        dst.disposal = Frame::DISPOSAL_NONE;
+        break;
+    }
+    dst.gif_transparent_index = gcb.TransparentColor;
+
+    return !dst.empty;
+  }
+
+  bool provides_optimized_frames() {
+    return true;
+  }
+
+  bool provides_animation() {
+    return true;
   }
 };
-
-// Browsers ignore the background color and use transparent instead
-const cv::Vec4b Giflib_Decoder::_bg_scalar(0, 0, 0, 0);

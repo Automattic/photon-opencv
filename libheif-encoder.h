@@ -37,9 +37,7 @@ public:
     _output->clear();
   }
 
-  bool add_frame(const cv::Mat &frame, int delay) {
-    (void) delay;
-
+  bool add_frame(const Frame &frame) {
     // Only one format supported for now
     if (_output->size() || "avif" != _format) {
       return false;
@@ -100,9 +98,9 @@ public:
       heif_encoder_set_lossy_quality(encoder.get(), _quality);
     }
 
-    heif_colorspace colorspace = frame.channels() >= 3?
+    heif_colorspace colorspace = frame.img.channels() >= 3?
       heif_colorspace_RGB : heif_colorspace_monochrome;
-    heif_chroma chroma = frame.channels() >= 3?
+    heif_chroma chroma = frame.img.channels() >= 3?
       heif_chroma_444 : heif_chroma_monochrome;
 
     heif_channel channel_map[][4] = {
@@ -116,8 +114,8 @@ public:
       nullptr,
       &heif_image_release);
     heif_image *raw_image;
-    error = heif_image_create(frame.cols,
-        frame.rows,
+    error = heif_image_create(frame.img.cols,
+        frame.img.rows,
         colorspace,
         chroma,
         &raw_image);
@@ -127,13 +125,13 @@ public:
     }
 
     std::vector<cv::Mat> channel_mats;
-    for (int i = 0; i < frame.channels(); i++) {
-      heif_channel channel_type = channel_map[frame.channels()-1][i];
+    for (int i = 0; i < frame.img.channels(); i++) {
+      heif_channel channel_type = channel_map[frame.img.channels()-1][i];
 
       error = heif_image_add_plane(image.get(),
           channel_type,
-          frame.cols,
-          frame.rows,
+          frame.img.cols,
+          frame.img.rows,
           8);
       if (error.code != heif_error_Ok) {
         return false;
@@ -141,20 +139,20 @@ public:
 
       int stride;
       uint8_t *data = heif_image_get_plane(image.get(), channel_type, &stride);
-      channel_mats.emplace_back(frame.rows,
-          frame.cols,
+      channel_mats.emplace_back(frame.img.rows,
+          frame.img.cols,
           CV_8UC1,
           data,
           stride);
     }
 
     int trivial_fromto[] = {0, 0, 1, 1, 2, 2, 3, 3};
-    cv::mixChannels(&frame,
+    cv::mixChannels(&frame.img,
         1,
         channel_mats.data(),
         channel_mats.size(),
         trivial_fromto,
-        frame.channels());
+        frame.img.channels());
 
     error = heif_context_encode_image(context.get(),
         image.get(),

@@ -87,12 +87,17 @@ public:
     _ok = true;
   }
 
-  bool get_next_frame(cv::Mat &dst, int &delay) {
-    dst = _frame;
+  bool get_next_frame(Frame &dst) {
+    dst.img = _frame;
     _frame = cv::Mat();
-    delay = 0;
+    dst.delay = 0;
+    dst.x = 0;
+    dst.y = 0;
+    dst.canvas_width = dst.img.cols;
+    dst.canvas_height = dst.img.rows;
+    dst.empty = dst.img.empty();
 
-    return !dst.empty();
+    return !dst.empty;
   }
 
   bool get_icc_profile(std::vector<uint8_t> &dst) {

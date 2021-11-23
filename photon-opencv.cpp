@@ -17,6 +17,8 @@
 #include <webp/demux.h>
 #include <webp/encode.h>
 #include <webp/mux.h>
+#include "gif-palette.h"
+#include "frame.h"
 #include "tempfile.h"
 #include "srgb.icc.h"
 #include "decoder.h"
@@ -24,6 +26,7 @@
 #include "opencv-decoder.h"
 #include "opencv-encoder.h"
 #include "giflib-decoder.h"
+#include "giflib-encoder.h"
 #include "msfgif-encoder.h"
 #include "libwebp-decoder.h"
 #include "libwebp-encoder.h"
@@ -38,8 +41,7 @@
 
 class Photon_OpenCV : public Php::Base {
 protected:
-  cv::Mat _img;
-  int _delay;
+  Frame _frame;
   std::string _last_error;
   std::string _format;
   int _type;
@@ -50,11 +52,11 @@ protected:
   int _expected_height;
   int _header_channels;
   bool _force_reencode;
-  bool _animation_decoder;
   Exiv2::Value::AutoPtr _original_orientation;
   std::map<std::string, std::string> _image_options;
   std::vector<std::function<void()>> _operations;
   std::unique_ptr<Decoder> _decoder;
+  bool _preserve_palette;
 
   const int WEBP_DEFAULT_QUALITY = 75;
   const int AVIF_DEFAULT_QUALITY = 75;
@@ -64,11 +66,11 @@ protected:
   static cmsHPROFILE _srgb_profile;
 
   void _enforce8u() {
-    if (CV_8U != _img.depth()) {
+    if (CV_8U != _frame.img.depth()) {
       /* Proper convertion is mostly guess work, but it's fairly rare and
          these are reasonable assumptions */
       double alpha, beta;
-      switch (_img.depth()) {
+      switch (_frame.img.depth()) {
         case CV_16U:
           alpha = 1./256;
           beta = 0;
@@ -90,7 +92,7 @@ protected:
           break;
       }
 
-      _img.convertTo(_img, CV_8U, alpha, beta);
+      _frame.img.convertTo(_frame.img, CV_8U, alpha, beta);
     }
   }
 
@@ -99,8 +101,8 @@ protected:
       return true;
     }
 
-    cmsHPROFILE embedded_profile = cmsOpenProfileFromMem(
-        _icc_profile.data(), _icc_profile.size());
+    cmsHPROFILE embedded_profile = cmsOpenProfileFromMem(_icc_profile.data(),
+        _icc_profile.size());
     if (!embedded_profile) {
       _last_error = "Failed to decode embedded profile";
       _icc_profile.clear();
@@ -109,7 +111,7 @@ protected:
 
     int storage_format;
     int num_intensity_channels;
-    switch (_img.channels()) {
+    switch (_frame.img.channels()) {
       case 1:
       case 2:
         storage_format = TYPE_GRAY_8;
@@ -145,17 +147,19 @@ protected:
 
     /* Alpha optimizations using `reshape()` require continuous data.
        If necessary, this can be optimized out for images without alpha */
-    if (!_img.isContinuous()) {
-      _img = _img.clone();
+    if (!_frame.img.isContinuous()) {
+      _frame.img = _frame.img.clone();
     }
 
     int output_type = _imagehasalpha()? CV_8UC4 : CV_8UC3;
-    cv::Mat transformed_img = cv::Mat(_img.rows, _img.cols, output_type);
+    cv::Mat transformed_img = cv::Mat(_frame.img.rows,
+        _frame.img.cols,
+        output_type);
 
     /* The sRGB profile can't handle the alpha channel. We make sure it's
        skipped when applying the profile */
-    cv::Mat no_alpha_img = _img.
-      reshape(1, _img.rows*_img.cols).
+    cv::Mat no_alpha_img = _frame.img.
+      reshape(1, _frame.img.rows*_frame.img.cols).
       colRange(0, num_intensity_channels);
     cv::Mat no_alpha_transformed_img = transformed_img.
       reshape(1, transformed_img.rows*transformed_img.cols).
@@ -172,7 +176,8 @@ protected:
 
     if (_imagehasalpha()) {
       /* Copy the original alpha information */
-      cv::Mat alpha_only_img = _img.reshape(1, _img.rows*_img.cols).
+      cv::Mat alpha_only_img = _frame.img.reshape(1,
+          _frame.img.rows*_frame.img.cols).
         colRange(num_intensity_channels, num_intensity_channels+1);
       cv::Mat alpha_only_transformed_img = transformed_img.
         reshape(1, transformed_img.rows*transformed_img.cols).
@@ -180,7 +185,7 @@ protected:
       alpha_only_img.copyTo(alpha_only_transformed_img);
     }
 
-    _img = transformed_img;
+    _frame.img = transformed_img;
 
     return true;
   }
@@ -223,23 +228,25 @@ protected:
 
   bool _imagehasalpha() {
     /* Even number of channels means it's either GA or BGRA */
-    int num_channels = _img.empty()? _header_channels : _img.channels();
+    int num_channels = _frame.img.empty()?
+      _header_channels : _frame.img.channels();
     return !(num_channels & 1);
   }
 
   /* Assumes alpha is the last channel */
   void _associatealpha() {
     /* Continuity required for `reshape()` */
-    if (!_img.isContinuous()) {
-      _img = _img.clone();
+    if (!_frame.img.isContinuous()) {
+      _frame.img = _frame.img.clone();
     }
 
-    int alpha_channel = _img.channels()-1;
-    cv::Mat alpha = _img.reshape(1, _img.rows*_img.cols).
+    int alpha_channel = _frame.img.channels()-1;
+    cv::Mat alpha = _frame.img.reshape(1, _frame.img.rows*_frame.img.cols).
       colRange(alpha_channel, alpha_channel+1);
 
     for (int i = 0; i < alpha_channel; i++) {
-      cv::Mat color = _img.reshape(1, _img.rows*_img.cols).colRange(i, i+1);
+      cv::Mat color = _frame.img.reshape(
+          1, _frame.img.rows*_frame.img.cols).colRange(i, i+1);
       cv::multiply(color, alpha, color, 1./255);
     }
   }
@@ -247,47 +254,129 @@ protected:
   /* Assumes alpha is the last channel */
   void _dissociatealpha() {
     /* Continuity required for `reshape()` */
-    if (!_img.isContinuous()) {
-      _img = _img.clone();
+    if (!_frame.img.isContinuous()) {
+      _frame.img = _frame.img.clone();
     }
 
-    int alpha_channel = _img.channels()-1;
-    cv::Mat alpha = _img.reshape(1, _img.rows*_img.cols).
+    int alpha_channel = _frame.img.channels()-1;
+    cv::Mat alpha = _frame.img.reshape(1, _frame.img.rows*_frame.img.cols).
       colRange(alpha_channel, alpha_channel+1);
 
     for (int i = 0; i < alpha_channel; i++) {
-      cv::Mat color = _img.reshape(1, _img.rows*_img.cols).colRange(i, i+1);
+      cv::Mat color = _frame.img.reshape(
+          1, _frame.img.rows*_frame.img.cols).colRange(i, i+1);
       cv::divide(color, alpha, color, 255.);
     }
   }
 
   void _transparencysaferesize(int width, int height, int filter) {
-    if (_imagehasalpha()) {
-      _associatealpha();
+    if (_frame.img.empty()) {
+      return;
     }
 
-    cv::resize(_img, _img, cv::Size(width, height), 0, 0, filter);
+    double width_mul = (double) width / _frame.canvas_width;
+    double height_mul = (double) height / _frame.canvas_height;
 
-    if (_imagehasalpha()) {
-      _dissociatealpha();
+    // Changing this logic may introduce inconsistencies in animations
+    int fx = _frame.x * width_mul;
+    int fy = _frame.y * height_mul;
+    int fw = ceil((_frame.x + _frame.img.cols) * width_mul) - fx;
+    int fh = ceil((_frame.y + _frame.img.rows) * height_mul) - fy;
+    // Preserve bottom right edge
+    if (_frame.x + _frame.img.cols == _frame.canvas_width) {
+      fw = width - fx;
     }
+    if (_frame.y + _frame.img.rows == _frame.canvas_height) {
+      fh = height - fy;
+    }
+
+    if (_preserve_palette) {
+      // Ensure border data doesn't turn into garbage
+      if (fw && (int) ((fx + 0.5) / width_mul) < _frame.x) {
+        fx++;
+        fw--;
+      }
+      if (fw &&
+          (int) ((fx + fw - 0.5) / width_mul) >= _frame.x+ _frame.img.cols) {
+        fw--;
+      }
+      if (fh && (int) ((fy + 0.5) / height_mul) < _frame.y) {
+        fy++;
+        fh--;
+      }
+      if (fh &&
+          (int) ((fy + fh - 0.5) / height_mul) >= _frame.y + _frame.img.rows) {
+        fh--;
+      }
+    }
+
+    if (!fw || !fh) {
+      _frame.x = 0;
+      _frame.y = 0;
+      _frame.img = cv::Mat();
+      return;
+    }
+
+    if (!_preserve_palette) {
+      if (_imagehasalpha()) {
+        _associatealpha();
+      }
+      cv::resize(_frame.img, _frame.img, cv::Size(fw, fh), 0, 0, filter);
+      if (_imagehasalpha()) {
+        _dissociatealpha();
+      }
+    }
+    else {
+      cv::Mat dst(fh, fw, _frame.img.type());
+
+      // x-axis offset cache
+      std::vector<int> x_off(fw);
+      for (int i = 0; i < fw; i++) {
+        x_off[i] = (fx + i + 0.5) / width_mul - _frame.x;
+      }
+
+      int channels = dst.channels();
+      uint8_t *dst_line = dst.data;
+      for (int i = 0; i < fh; i++) {
+        int y = (fy + i + 0.5) / height_mul - _frame.y;
+        void *src_line = _frame.img.data + y * _frame.img.step;
+        for (int j = 0; j < fw; j++) {
+          if (1 == channels) {
+            ((uint8_t *) dst_line)[j] = ((uint8_t *) src_line)[x_off[j]];
+          }
+          else if (2 == channels) {
+            ((uint16_t *) dst_line)[j] = ((uint16_t *) src_line)[x_off[j]];
+          }
+          else if (3 == channels) {
+            ((cv::Vec3b *) dst_line)[j] = ((cv::Vec3b *) src_line)[x_off[j]];
+          }
+          else if (4 == channels) {
+            ((uint32_t *) dst_line)[j] = ((uint32_t *) src_line)[x_off[j]];
+          }
+        }
+        dst_line += dst.step;
+      }
+
+      _frame.img = dst;
+    }
+
+    _frame.canvas_width = width;
+    _frame.canvas_height = height;
+    _frame.x = fx;
+    _frame.y = fy;
   }
 
   bool _setupdecoder(bool silent=true) {
     _decoder.reset(new OpenCV_Decoder(&_raw_image_data));
-    _animation_decoder = false;
 
     if (!_decoder->loaded()) {
       _decoder.reset(new Giflib_Decoder(&_raw_image_data));
-      _animation_decoder = true;
     }
     if (!_decoder->loaded()) {
       _decoder.reset(new LibWebP_Decoder(&_raw_image_data));
-      _animation_decoder = true;
     }
     if (!_decoder->loaded()) {
       _decoder.reset(new Libheif_Decoder(&_raw_image_data));
-      _animation_decoder = false;
     }
 
     if (!_decoder->loaded()) {
@@ -310,7 +399,7 @@ protected:
   }
 
   bool _loadnextframe(bool silent=true) {
-    if (!_decoder->get_next_frame(_img, _delay)) {
+    if (!_decoder->get_next_frame(_frame)) {
       if (!silent) {
         throw Php::Exception("Unable to load next frame");
       }
@@ -324,12 +413,13 @@ protected:
 
   bool _loadimagefromrawdata() {
     /* Clear image in case object is being reused */
-    _img = cv::Mat();
+    _frame.img = cv::Mat();
     _decoder.reset(nullptr);
     _icc_profile.clear();
     _image_options.clear();
     _compression_quality = -1;
     _force_reencode = false;
+    _preserve_palette = false;
 
     Exiv2::Image::AutoPtr exiv_img;
     try {
@@ -351,7 +441,7 @@ protected:
       // try to decode the image to get the proper information early
       _setupdecoder(false);
       _loadnextframe(false);
-      _header_channels = _img.channels();
+      _header_channels = _frame.img.channels();
     }
 
     switch (exiv_img->imageType()) {
@@ -382,10 +472,10 @@ protected:
         // Default to jpeg. Load the first frame early if we haven't already
         _format = "jpeg";
         _force_reencode = true;
-        if (_img.empty()) {
+        if (_frame.empty) {
           _setupdecoder(false);
           _loadnextframe(false);
-          _header_channels = _img.channels();
+          _header_channels = _frame.img.channels();
         }
         break;
     }
@@ -399,8 +489,10 @@ protected:
       _original_orientation = orientation_pos->getValue();
     }
 
-    _expected_width = _img.empty()? exiv_img->pixelWidth() : _img.cols;
-    _expected_height = _img.empty()? exiv_img->pixelHeight() : _img.rows;
+    _expected_width = _frame.empty?
+      exiv_img->pixelWidth() : _frame.canvas_width;
+    _expected_height = _frame.empty?
+      exiv_img->pixelHeight() : _frame.canvas_height;
 
     if (exiv_img->iccProfileDefined()) {
       const Exiv2::DataBuf *profile = exiv_img->iccProfile();
@@ -476,7 +568,7 @@ protected:
     cv::Vec4b color;
 
     // Assumes 1 byte per channel
-    if (_img.channels() <= 2) {
+    if (_frame.img.channels() <= 2) {
       color[0] = round(
           bgr_color[0]*.114 + bgr_color[1]*.587 + bgr_color[2]*.299);
       color[1] = 255;
@@ -646,19 +738,28 @@ protected:
             &_image_options,
             &output_buffer));
     }
-    else if ("webp" == _format && _animation_decoder) {
+    else if ("webp" == _format && _decoder->provides_animation()) {
       encoder.reset(new LibWebP_Encoder(
             _format,
             quality,
             &_image_options,
             &output_buffer));
     }
-    else if ("gif" == _format && _animation_decoder) {
-      encoder.reset(new Msfgif_Encoder(
-            _format,
-            quality,
-            &_image_options,
-            &output_buffer));
+    else if ("gif" == _format && _decoder->provides_animation()) {
+      if (_decoder->provides_optimized_frames()) {
+        encoder.reset(new Giflib_Encoder(
+              _format,
+              quality,
+              &_image_options,
+              &output_buffer));
+      }
+      else {
+        encoder.reset(new Msfgif_Encoder(
+              _format,
+              quality,
+              &_image_options,
+              &output_buffer));
+      }
     }
     else {
       encoder.reset(new OpenCV_Encoder(
@@ -668,12 +769,13 @@ protected:
             &output_buffer));
     }
 
-    if (_img.empty()) {
+    if (_frame.empty) {
       if (!_loadnextframe()) {
         return false;
       }
     }
 
+    _preserve_palette = encoder->requires_original_palette();
     do {
       // Color profile gets silently stripped, apply it first
       _converttosrgb();
@@ -682,12 +784,12 @@ protected:
         operation();
       }
 
-      if (!encoder->add_frame(_img, _delay)) {
+      if (!encoder->add_frame(_frame)) {
         return false;
       }
     } while (_loadnextframe());
 
-    _img = cv::Mat();
+    _frame.img = cv::Mat();
     _decoder.reset(nullptr);
 
     if (!encoder->finalize()) {
@@ -727,25 +829,109 @@ protected:
   }
 
   void _rotate(int rotation) {
-    cv::rotate(_img, _img, rotation);
+    if (_frame.img.empty()) {
+      return;
+    }
+
+    if (cv::ROTATE_90_CLOCKWISE == rotation) {
+      int nx = _frame.canvas_height - _frame.img.rows - _frame.y;
+      int ny = _frame.x;
+
+      _frame.x = nx;
+      _frame.y = ny;
+
+      std::swap(_frame.canvas_width, _frame.canvas_height);
+    }
+    else if (cv::ROTATE_90_COUNTERCLOCKWISE == rotation) {
+      int nx = _frame.y;
+      int ny = _frame.canvas_width - _frame.img.cols - _frame.x;
+
+      _frame.x = nx;
+      _frame.y = ny;
+
+      std::swap(_frame.canvas_width, _frame.canvas_height);
+    }
+    else if (cv::ROTATE_180 == rotation) {
+      _frame.x = _frame.canvas_width - _frame.img.cols - _frame.x;
+      _frame.y = _frame.canvas_height - _frame.img.rows - _frame.y;
+    }
+
+    cv::rotate(_frame.img, _frame.img, rotation);
   }
 
   void _flip(int flip_code) {
-    cv::flip(_img, _img, flip_code);
+    if (_frame.img.empty()) {
+      return;
+    }
+
+    _frame.x = _frame.canvas_width - _frame.x - _frame.img.cols;
+    _frame.y = _frame.canvas_height - _frame.y - _frame.img.rows;
+    cv::flip(_frame.img, _frame.img, flip_code);
   }
 
   void _crop(int x, int y, int width, int height) {
-    _img = _img(cv::Rect(x, y, width, height));
+    if (_frame.img.empty()) {
+      return;
+    }
+
+    int fx = std::max(0, std::min(width, _frame.x - x));
+    int fy = std::max(0, std::min(height, _frame.y - y));
+    int fx2 = std::max(0, std::min(width, _frame.x + _frame.img.cols - x));
+    int fy2 = std::max(0, std::min(height, _frame.y + _frame.img.rows - y));
+
+    if (fx == fx2 || fy == fy2) {
+      _frame.img = cv::Mat();
+    }
+    else {
+      _frame.img = _frame.img(cv::Rect(
+            std::max(0, x - _frame.x),
+            std::max(0, y - _frame.y),
+            fx2 - fx,
+            fy2 - fy));
+    }
+
+    _frame.x = fx;
+    _frame.y = fy;
+
+    _frame.canvas_width = width;
+    _frame.canvas_height = height;
   }
 
   void _border(int width, int height, cv::Vec3b color) {
-    cv::Mat dst(_img.rows + height*2,
-      _img.cols + width*2,
-      _img.type(),
+    if (_frame.img.empty()) {
+      return;
+    }
+
+    if (_preserve_palette) {
+      throw Php::Exception("Unable to insert border and preserve palette");
+    }
+
+    cv::Mat dst(_frame.img.rows + height*2,
+      _frame.img.cols + width*2,
+      _frame.img.type(),
       _bgrtoloadedimagetype(color));
 
-    _img.copyTo(dst(cv::Rect(width, height, _img.cols, _img.rows)));
-    _img = dst;
+    _frame.img.copyTo(
+        dst(cv::Rect(width, height, _frame.img.cols, _frame.img.rows)));
+    _frame.img = dst;
+
+    _frame.x -= width;
+    _frame.y -= height;
+
+    if (_frame.x < 0) {
+      _frame.canvas_width -= _frame.x;
+      _frame.x = 0;
+    }
+    if (_frame.y < 0) {
+      _frame.canvas_height -= _frame.y;
+      _frame.y = 0;
+    }
+    if (_frame.x + _frame.img.cols > _frame.canvas_width) {
+      _frame.canvas_width = _frame.x + _frame.img.cols;
+    }
+    if (_frame.y + _frame.img.rows > _frame.canvas_height) {
+      _frame.canvas_height = _frame.y + _frame.img.rows;
+    }
   }
 
 public:

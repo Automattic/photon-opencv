@@ -41,7 +41,7 @@ public:
     _last_ts = 0;
   }
 
-  bool get_next_frame(cv::Mat &dst, int &delay) {
+  bool get_next_frame(Frame &dst) {
     uint8_t *buffer;
     int ts;
     if (!WebPAnimDecoderHasMoreFrames(_decoder.get())
@@ -49,16 +49,25 @@ public:
       return false;
     }
 
-    delay = ts - _last_ts;
+    dst.delay = ts - _last_ts;
     _last_ts = ts;
 
-    dst = cv::Mat(_anim_info.canvas_height,
+    dst.img = cv::Mat(_anim_info.canvas_height,
         _anim_info.canvas_width,
         CV_8UC4);
-    memcpy(dst.data,
+    memcpy(dst.img.data,
         buffer,
         _anim_info.canvas_width * _anim_info.canvas_height * 4);
+    dst.x = 0;
+    dst.y = 0;
+    dst.canvas_width = dst.img.cols;
+    dst.canvas_height = dst.img.rows;
+    dst.empty = false;
 
+    return true;
+  }
+
+  bool provides_animation() {
     return true;
   }
 };
