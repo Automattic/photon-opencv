@@ -4,56 +4,78 @@ protected:
   std::string _format;
   int _quality;
   std::vector<uint8_t> *_output;
-  std::unique_ptr<WebPAnimEncoder, decltype(&WebPAnimEncoderDelete)> _encoder;
-  WebPConfig _config;
-  int _timestamp;
+  std::unique_ptr<WebPMux, decltype(&WebPMuxDelete)> _mux;
+  int _delay_error;
+  struct WebPMuxFrameInfo _next;
+  std::vector<WebPData> _encoded_frames;
+  bool _lossless;
 
-  bool _init_encoder(const Frame &frame) {
-    WebPAnimEncoderOptions webp_options;
-    WebPAnimEncoderOptionsInit(&webp_options);
-
-    bool lossless = false;
-    auto lossless_option = _options->find("webp:lossless");
-    if (lossless_option != _options->end()
-        && "true" == lossless_option->second) {
-      lossless = true;
-    }
-
-    bool minimize_requested = false;
-    auto minimize_option = _options->find("webp:minimize_size");
-    if (minimize_option != _options->end()
-        && "true" == minimize_option->second) {
-      minimize_requested = true;
-    }
-    webp_options.minimize_size = minimize_requested;
-
-    // Lower is faster, higher is slower, but better (range: [0-6])
-    // Default to auto select, unless option is set explicitly and correctly
-    int method = minimize_requested? 4 : 1;
-    auto encoding_effort_option = _options->find("webp:encoding_effort");
-    if (encoding_effort_option != _options->end()) {
-      try {
-        int encoding_effort = stoi(encoding_effort_option->second);
-        if (encoding_effort >= 0 && encoding_effort <= 6) {
-          method = encoding_effort;
-        }
-      }
-      catch (const std::invalid_argument &e) {
-      }
-    }
-
-    _encoder.reset(WebPAnimEncoderNew(frame.img.cols,
-          frame.img.rows,
-          &webp_options));
-    if (!_encoder.get()) {
+  bool _init_mux(const Frame &frame) {
+    _mux.reset(WebPMuxNew());
+    if (!_mux.get()) {
       return false;
     }
 
-    WebPConfigInit(&_config);
-    _config.lossless = lossless;
-    // If lossless, quality indicates the effort put into compression
-    _config.quality = _quality;
-    _config.method = method;
+    if (WEBP_MUX_OK != WebPMuxSetCanvasSize(
+          _mux.get(), frame.canvas_width, frame.canvas_height)) {
+      return false;
+    }
+
+    struct WebPMuxAnimParams params;
+    params.loop_count = frame.loops;
+    params.bgcolor = 0;
+    if (WEBP_MUX_OK != WebPMuxSetAnimationParams(_mux.get(), &params)) {
+      return false;
+    }
+
+    auto lossless_option = _options->find("webp:lossless");
+    if (lossless_option != _options->end()
+        && "true" == lossless_option->second) {
+      _lossless = true;
+    }
+
+    return true;
+  }
+
+  bool _maybe_insert_frame() {
+    if (_encoded_frames.empty() && !_delay_error) {
+      return true;
+    }
+
+    // Need to insert a delay, but there is no frame. Create a dummy one
+    if (_encoded_frames.empty()) {
+      _next.x_offset = 0;
+      _next.y_offset = 0;
+      _next.id = WEBP_CHUNK_ANMF;
+      _next.dispose_method = WEBP_MUX_DISPOSE_NONE;
+      _next.blend_method = WEBP_MUX_NO_BLEND;
+
+
+      uint8_t *encoded_data;
+      uint32_t pixel = 0;
+      int size = WebPEncodeLosslessBGRA((uint8_t *) &pixel,
+          1,
+          1,
+          1,
+          &encoded_data);
+
+      if (!size) {
+        return 0;
+      }
+
+      WebPData encoded_frame;
+      encoded_frame.bytes = encoded_data;
+      encoded_frame.size = size;
+      _encoded_frames.push_back(encoded_frame);
+    }
+
+    _next.duration = _delay_error;
+    _next.bitstream = _encoded_frames.back();
+    _delay_error = 0;
+
+    if (WEBP_MUX_OK != WebPMuxPushFrame(_mux.get(), &_next, 0)) {
+      return false;
+    }
 
     return true;
   }
@@ -63,23 +85,38 @@ public:
       int quality,
       const std::map<std::string, std::string> *options,
       std::vector<uint8_t> *output) :
-      _encoder(nullptr, &WebPAnimEncoderDelete) {
+      _mux(nullptr, &WebPMuxDelete) {
     _options = options;
     _quality = quality;
     _format = format;
     _output = output;
 
     _output->clear();
-    _timestamp = 0;
+    _delay_error = 0;
+    _lossless = false;
   }
 
+  ~LibWebP_Encoder() {
+    for (auto frame : _encoded_frames) {
+      WebPDataClear(&frame);
+    }
+  }
 
   bool add_frame(const Frame &frame) {
     if ("webp" != _format) {
       return false;
     }
 
-    if (!_encoder.get() && !_init_encoder(frame)) {
+    if (!_mux.get() && !_init_mux(frame)) {
+      return false;
+    }
+
+    if (!frame.empty && frame.img.empty()) {
+      _delay_error += frame.delay;
+      return true;
+    }
+
+    if (!_maybe_insert_frame()) {
       return false;
     }
 
@@ -109,35 +146,78 @@ public:
         break;
     }
 
-    WebPPicture picture;
-    WebPPictureInit(&picture);
-    picture.use_argb = 1;
-    picture.argb = (uint32_t *) img.data;
-    picture.argb_stride = img.step / 4;
-    picture.width = img.cols;
-    picture.height = img.rows;
+    // WebP only supports even X and Y
+    if (frame.x & 1 || frame.y & 1) {
+      cv::Mat bordered(img.rows + (frame.y & 1),
+          img.cols + (frame.x & 1),
+          CV_8UC4,
+          cv::Vec4b(0, 0, 0, 0));
 
-    if (!WebPAnimEncoderAdd(_encoder.get(), &picture, _timestamp, &_config)) {
+      img.copyTo(bordered(
+          cv::Rect(frame.x & 1, frame.y & 1, img.cols, img.rows)));
+      img = bordered;
+    }
+
+    _next.x_offset = frame.x & ~1;
+    _next.y_offset = frame.y & ~1;
+    _next.id = WEBP_CHUNK_ANMF;
+    // TODO: dispose previous
+    _next.dispose_method = Frame::DISPOSAL_BACKGROUND == frame.disposal?
+      WEBP_MUX_DISPOSE_BACKGROUND : WEBP_MUX_DISPOSE_NONE;
+    _next.blend_method = Frame::BLENDING_BLEND == frame.blending?
+      WEBP_MUX_BLEND : WEBP_MUX_NO_BLEND;
+
+    size_t size;
+    uint8_t *encoded_data;
+    if (_lossless) {
+      size = WebPEncodeLosslessBGRA(img.data,
+          img.cols,
+          img.rows,
+          img.step,
+          &encoded_data);
+    }
+    else {
+      size = WebPEncodeBGRA(img.data,
+          img.cols,
+          img.rows,
+          img.step,
+          _quality,
+          &encoded_data);
+    }
+
+    if (!size) {
       return false;
     }
 
-    _timestamp += frame.delay;
+    WebPData encoded_frame;
+    encoded_frame.bytes = encoded_data;
+    encoded_frame.size = size;
+    _encoded_frames.push_back(encoded_frame);
+
+    _delay_error += frame.delay;
 
     return true;
   }
 
   bool finalize() {
-    WebPData wdata;
-    WebPDataInit(&wdata);
+    WebPData data;
+    WebPDataInit(&data);
 
-    if (!_encoder.get() || !WebPAnimEncoderAssemble(_encoder.get(), &wdata)) {
-      WebPDataClear(&wdata);
+    if (!_mux.get()) {
       return false;
     }
 
-    _output->resize(wdata.size);
-    memcpy(_output->data(), wdata.bytes, wdata.size);
-    WebPDataClear(&wdata);
+    if (!_maybe_insert_frame()) {
+      return false;
+    }
+
+    if (WEBP_MUX_OK != WebPMuxAssemble(_mux.get(), &data)) {
+      return false;
+    }
+
+    _output->resize(data.size);
+    memcpy(_output->data(), data.bytes, data.size);
+    WebPDataClear(&data);
 
     return true;
   }
