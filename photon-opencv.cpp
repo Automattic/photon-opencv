@@ -1205,8 +1205,9 @@ public:
     return _type;
   }
 
-  void setimagetype() {
+  void setimagetype(Php::Parameters &params) {
     // Unimplemented
+    (void) params;
   }
 
   void resizeimage(Php::Parameters &params) {
@@ -1463,11 +1464,13 @@ extern "C" {
     photon_opencv.method<&Photon_OpenCV::setimageprofile>(
       "setimageprofile", {
       Php::ByVal("name", Php::Type::String),
-      Php::ByVal("profile", Php::Type::Null),
+      Php::ByVal("profile", Php::Type::String),
     });
 
     photon_opencv.method<&Photon_OpenCV::getimagetype>("getimagetype");
-    photon_opencv.method<&Photon_OpenCV::setimagetype>("setimagetype");
+    photon_opencv.method<&Photon_OpenCV::setimagetype>("setimagetype", {
+      Php::ByVal("type", Php::Type::Numeric)
+    });
 
     photon_opencv.method<&Photon_OpenCV::resizeimage>("resizeimage", {
       Php::ByVal("width", Php::Type::Numeric),
@@ -1489,6 +1492,8 @@ extern "C" {
     photon_opencv.method<&Photon_OpenCV::cropimage>("cropimage", {
       Php::ByVal("width", Php::Type::Numeric),
       Php::ByVal("height", Php::Type::Numeric),
+      Php::ByVal("x", Php::Type::Numeric),
+      Php::ByVal("y", Php::Type::Numeric),
     });
 
     photon_opencv.method<&Photon_OpenCV::borderimage>("borderimage", {
