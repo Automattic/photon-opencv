@@ -1,7 +1,7 @@
 class Gif_Palette {
 private:
   std::unique_ptr<ColorMapObject, decltype(&GifFreeMapObject)> _color_map;
-  std::map<uint32_t, int> _color_to_index;
+  std::unordered_map<uint32_t, int> _color_to_index;
 
 public:
 
