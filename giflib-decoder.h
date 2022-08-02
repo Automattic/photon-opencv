@@ -110,7 +110,7 @@ public:
   }
 
   bool get_next_frame(Frame &dst) {
-    dst.img = cv::Mat();
+    dst.reset();
 
     GraphicsControlBlock gcb;
     gcb.DisposalMode = DISPOSAL_UNSPECIFIED;

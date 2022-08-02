@@ -29,13 +29,8 @@ struct Frame {
 
   bool may_dispose_to_previous;
 
-  Frame() :
-    empty(true),
-    loops(0),
-    disposal(DISPOSAL_UNDEFINED),
-    blending(BLENDING_UNDEFINED),
-    gif_transparent_index(-1),
-    may_dispose_to_previous(false) {
+  Frame() {
+      reset();
   }
 
   Frame(const Frame &src) :
@@ -53,5 +48,21 @@ struct Frame {
     gif_global_palette(src.gif_global_palette),
     gif_transparent_index(src.gif_transparent_index),
     may_dispose_to_previous(src.may_dispose_to_previous) {
+  }
+
+  void reset() {
+    img = cv::Mat();
+    empty = true;
+    loops = 0;
+    disposal = DISPOSAL_UNDEFINED;
+    blending = BLENDING_UNDEFINED;
+    gif_transparent_index = -1;
+    may_dispose_to_previous = false;
+    gif_frame_palette.reset();
+    gif_global_palette.reset();
+    x = 0;
+    y = 0;
+    canvas_width = 0;
+    canvas_height = 0;
   }
 };

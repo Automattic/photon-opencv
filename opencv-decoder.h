@@ -28,6 +28,7 @@ public:
   }
 
   bool get_next_frame(Frame &dst) {
+    dst.reset();
     dst.img = _frame;
     _frame = cv::Mat();
     dst.delay = 0;

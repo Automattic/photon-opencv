@@ -44,6 +44,9 @@ public:
   bool get_next_frame(Frame &dst) {
     uint8_t *buffer;
     int ts;
+
+    dst.reset();
+
     if (!WebPAnimDecoderHasMoreFrames(_decoder.get())
         || !WebPAnimDecoderGetNext(_decoder.get(), &buffer, &ts)) {
       return false;
