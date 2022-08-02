@@ -6,7 +6,51 @@ protected:
   std::shared_ptr<Gif_Palette> _global_palette;
   int _loops;
   bool _can_read_loops;
-  
+  bool _may_dispose_to_previous;
+
+  bool _has_previous_disposal() {
+    GraphicsControlBlock gcb;
+    gcb.DisposalMode = DISPOSAL_UNSPECIFIED;
+
+    // Do minimal parsing to find a GCB with disposal set to previous
+    GifRecordType type;
+    do {
+      if (GIF_ERROR == DGifGetRecordType(_gif.get(), &type)) {
+        break;
+      }
+
+      GifByteType *data = nullptr;
+      if (EXTENSION_RECORD_TYPE == type) {
+        int code;
+        if (GIF_ERROR == DGifGetExtension(_gif.get(), &code, &data)) {
+          continue;
+        }
+
+        if (GRAPHICS_EXT_FUNC_CODE == code && data) {
+          DGifExtensionToGCB(data[0], data+1, &gcb);
+
+          if (gcb.DisposalMode == DISPOSE_PREVIOUS) {
+            return true;
+          }
+        }
+        while (data && GIF_ERROR != DGifGetExtensionNext(_gif.get(), &data));
+      }
+      else if (IMAGE_DESC_RECORD_TYPE == type) {
+        if (GIF_ERROR == DGifGetImageDesc(_gif.get()) ) {
+          continue;
+        }
+
+        int size;
+        if (GIF_ERROR == DGifGetCode(_gif.get(), &size, &data)) {
+          continue;
+        }
+        while (data && GIF_ERROR != DGifGetCodeNext(_gif.get(), &data));
+      }
+    } while (TERMINATE_RECORD_TYPE != type);
+
+    return false;
+  }
+
 public:
   Giflib_Decoder(const std::string *data) :
     _gif(nullptr, [] (GifFileType *gif) { DGifCloseFile(gif, nullptr); }) {
@@ -58,6 +102,11 @@ public:
     _gif.reset(raw_gif);
     _can_read_loops = true;
     _loops = 1;
+
+    // _has_previous_disposal consumes the data. Rewind when done
+    int original_offset = _offset_and_data.first;
+    _may_dispose_to_previous = _has_previous_disposal();
+    _offset_and_data.first = original_offset;
   }
 
   bool get_next_frame(Frame &dst) {
@@ -78,7 +127,7 @@ public:
 
       if (EXTENSION_RECORD_TYPE == type) {
         int code;
-        GifByteType *data;
+        GifByteType *data = nullptr;
         if (GIF_ERROR == DGifGetExtension(_gif.get(), &code, &data)) {
           continue;
         }
@@ -182,6 +231,7 @@ public:
     dst.empty = dst.img.empty();
     dst.loops = _loops;
     dst.blending = Frame::BLENDING_BLEND;
+    dst.may_dispose_to_previous = _may_dispose_to_previous;
     switch (gcb.DisposalMode) {
       case DISPOSE_BACKGROUND:
         dst.disposal = Frame::DISPOSAL_BACKGROUND;

@@ -9,6 +9,7 @@ protected:
   struct WebPMuxFrameInfo _next;
   std::vector<WebPData> _encoded_frames;
   bool _lossless;
+  cv::Mat _state;
 
   bool _init_mux(const Frame &frame) {
     _mux.reset(WebPMuxNew());
@@ -32,6 +33,12 @@ protected:
     if (lossless_option != _options->end()
         && "true" == lossless_option->second) {
       _lossless = true;
+    }
+
+    if (frame.may_dispose_to_previous) {
+      _state = cv::Mat::zeros(frame.canvas_height,
+          frame.canvas_width,
+          CV_8UC4);
     }
 
     return true;
@@ -147,21 +154,20 @@ public:
     }
 
     // WebP only supports even X and Y
-    if (frame.x & 1 || frame.y & 1) {
-      cv::Mat bordered(img.rows + (frame.y & 1),
-          img.cols + (frame.x & 1),
-          CV_8UC4,
-          cv::Vec4b(0, 0, 0, 0));
-
-      img.copyTo(bordered(
-          cv::Rect(frame.x & 1, frame.y & 1, img.cols, img.rows)));
-      img = bordered;
-    }
-
+    // It is possible to extend the frame to include one col/row to the
+    // top/left. However, this becomes non-trivial with the dispose to
+    // background strategy, or with any non-blending frames. It is possible to
+    // the generate proper cleanup by keeping track of the state, enlarging
+    // the frame, and affecting the next frame to include the disposal pixels
+    // values for the current one. However, this increases the final file size,
+    // as each frame grows, as well as it introduces artifacts when lossy
+    // compression is used, as colors may bleed out into the bigger draw area
+    // and not get properly covered by the next frame.
+    // Therefore, we go with the simple approach of just snapping the frame
+    // onto a 2x2 grid
     _next.x_offset = frame.x & ~1;
     _next.y_offset = frame.y & ~1;
     _next.id = WEBP_CHUNK_ANMF;
-    // TODO: dispose previous
     _next.dispose_method = Frame::DISPOSAL_BACKGROUND == frame.disposal?
       WEBP_MUX_DISPOSE_BACKGROUND : WEBP_MUX_DISPOSE_NONE;
     _next.blend_method = Frame::BLENDING_BLEND == frame.blending?
@@ -195,6 +201,69 @@ public:
     _encoded_frames.push_back(encoded_frame);
 
     _delay_error += frame.delay;
+
+    // Update the state to match what is expected after the disposal
+    if (frame.may_dispose_to_previous) {
+      switch (frame.disposal) {
+        case Frame::DISPOSAL_PREVIOUS:
+          break;
+
+        case Frame::DISPOSAL_BACKGROUND:
+          cv::rectangle(_state,
+              cv::Rect(_next.x_offset,
+                _next.y_offset,
+                img.cols,
+                img.rows),
+              cv::Vec4b(0, 0, 0, 0),
+              -1);
+          break;
+
+        case Frame::DISPOSAL_NONE:
+        default:
+          cv::Vec4b *src_line = (cv::Vec4b *) img.data;
+          cv::Vec4b *dst_line =
+            (cv::Vec4b *) (_state.data + _next.y_offset * _state.step)
+            + _next.x_offset;
+          for (int i = 0; i < img.rows; i++) {
+            for (int j = 0; j < img.cols; j++) {
+              if (Frame::BLENDING_BLEND == frame.blending
+                  && src_line[j][3] < 128) {
+                break;
+              }
+              dst_line[j] = src_line[j];
+            }
+            src_line += img.step / sizeof(cv::Vec4b);
+            dst_line += _state.step / sizeof(cv::Vec4b);
+          }
+          break;
+      }
+    }
+
+    // Handle dispose to previous by inserting a cleanup frame with a duration
+    // of 0. This introduces a small delay in practice, but it saves us from
+    // the complex solution of enlarging the subsequent frames to include the
+    // cleanup for this one. Doing so would increase the final file size, as
+    // well as possibly introduce artifacts when using lossy compression, as
+    // colors may bleed out into the enlargened draw area
+    if (Frame::DISPOSAL_PREVIOUS == frame.disposal) {
+      if (!frame.may_dispose_to_previous) {
+        return false;
+      }
+
+      Frame cleanup_frame(frame);
+      cleanup_frame.delay = 0;
+      cleanup_frame.img = cv::Mat(_state,
+          cv::Rect(_next.x_offset,
+            _next.y_offset,
+            img.cols,
+            img.rows));
+      cleanup_frame.disposal = Frame::DISPOSAL_NONE;
+      cleanup_frame.blending = Frame::BLENDING_NO_BLEND;
+
+      if (!add_frame(cleanup_frame)) {
+        return false;
+      }
+    }
 
     return true;
   }
