@@ -55,8 +55,7 @@ protected:
       _next.y_offset = 0;
       _next.id = WEBP_CHUNK_ANMF;
       _next.dispose_method = WEBP_MUX_DISPOSE_NONE;
-      _next.blend_method = WEBP_MUX_NO_BLEND;
-
+      _next.blend_method = WEBP_MUX_BLEND;
 
       uint8_t *encoded_data;
       uint32_t pixel = 0;
