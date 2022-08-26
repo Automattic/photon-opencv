@@ -787,6 +787,7 @@ protected:
       }
 
       if (!encoder->add_frame(_frame)) {
+        _last_error = encoder->get_last_error();
         return false;
       }
     } while (_loadnextframe());
@@ -795,6 +796,7 @@ protected:
     _decoder.reset(nullptr);
 
     if (!encoder->finalize()) {
+      _last_error = encoder->get_last_error();
       return false;
     }
 

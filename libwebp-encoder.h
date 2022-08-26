@@ -14,11 +14,13 @@ protected:
   bool _init_mux(const Frame &frame) {
     _mux.reset(WebPMuxNew());
     if (!_mux.get()) {
+      _last_error = "Failed to initialize WebPMux";
       return false;
     }
 
     if (WEBP_MUX_OK != WebPMuxSetCanvasSize(
           _mux.get(), frame.canvas_width, frame.canvas_height)) {
+      _last_error = "Failed to set canvas size";
       return false;
     }
 
@@ -26,6 +28,7 @@ protected:
     params.loop_count = frame.loops;
     params.bgcolor = 0;
     if (WEBP_MUX_OK != WebPMuxSetAnimationParams(_mux.get(), &params)) {
+      _last_error = "Failed to set animation parameters";
       return false;
     }
 
@@ -66,7 +69,8 @@ protected:
           &encoded_data);
 
       if (!size) {
-        return 0;
+        _last_error = "Failed to encode dummy frame";
+        return false;
       }
 
       WebPData encoded_frame;
@@ -80,6 +84,7 @@ protected:
     _delay_error = 0;
 
     if (WEBP_MUX_OK != WebPMuxPushFrame(_mux.get(), &_next, 0)) {
+      _last_error = "Failed to push frame";
       return false;
     }
 
@@ -110,6 +115,7 @@ public:
 
   bool add_frame(const Frame &frame) {
     if ("webp" != _format) {
+      _last_error = "Expected webp format, got " + _format;
       return false;
     }
 
@@ -191,6 +197,7 @@ public:
     }
 
     if (!size) {
+      _last_error = "Failed to encode image data";
       return false;
     }
 
@@ -246,6 +253,7 @@ public:
     // colors may bleed out into the enlargened draw area
     if (Frame::DISPOSAL_PREVIOUS == frame.disposal) {
       if (!frame.may_dispose_to_previous) {
+        _last_error = "Unexpected dispose to previous";
         return false;
       }
 
@@ -272,6 +280,7 @@ public:
     WebPDataInit(&data);
 
     if (!_mux.get()) {
+      _last_error = "Tried to finalize uninitilized image";
       return false;
     }
 
@@ -280,6 +289,7 @@ public:
     }
 
     if (WEBP_MUX_OK != WebPMuxAssemble(_mux.get(), &data)) {
+      _last_error = "Failed to assemble";
       return false;
     }
 

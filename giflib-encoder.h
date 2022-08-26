@@ -27,6 +27,7 @@ protected:
         &error);
 
     if (GIF_OK != error) {
+      _last_error = "Failed to open encoder";
       return false;
     }
 
@@ -41,6 +42,7 @@ protected:
         0,
         frame.gif_global_palette?
           frame.gif_global_palette->get_color_map() : nullptr)) {
+      _last_error = "Failed to put screen descriptor";
       return false;
     }
 
@@ -48,17 +50,21 @@ protected:
     if (frame.loops != 1) {
       if (GIF_OK != EGifPutExtensionLeader(_gif.get(),
             APPLICATION_EXT_FUNC_CODE)) {
+        _last_error = "Failed to put looping extension leader";
         return false;
       }
       if (GIF_OK != EGifPutExtensionBlock(_gif.get(), 11, "NETSCAPE2.0")) {
+        _last_error = "Failed to put looping extension block";
         return false;
       }
       int loops = frame.loops >= (1 << 16)? 0 : frame.loops;
       uint8_t app_data[3] = {1, (uint8_t) loops, (uint8_t) (loops >> 8)};
       if (GIF_OK != EGifPutExtensionBlock(_gif.get(), 3, app_data)) {
+        _last_error = "Failed to put looping extension block data";
         return false;
       }
       if (GIF_OK != EGifPutExtensionTrailer(_gif.get())) {
+        _last_error = "Failed to put looping extension trailer";
         return false;
       }
     }
@@ -101,6 +107,7 @@ protected:
 
         auto raw_palette = GifMakeMapObject(2, colors);
         if (!raw_palette) {
+          _last_error = "Failed to make raw palette map object";
           return false;
         }
 
@@ -119,12 +126,14 @@ protected:
           _next.rows,
           false,
           _next_palette? _next_palette->get_color_map() : nullptr)) {
+      _last_error = "Failed to put image descriptor";
       return false;
     }
 
     uint8_t *line = _next.data;
     for (int i = 0; i < _next.rows; i++) {
       if (GIF_OK != EGifPutLine(_gif.get(), line, _next.cols)) {
+        _last_error = "Failed to put line" + i;
         return false;
       }
       line += _next.step / sizeof(uint8_t);
@@ -210,6 +219,7 @@ public:
 
   bool add_frame(const Frame &frame) {
     if ("gif" != _format) {
+      _last_error = "Expected gif format, got " + _format;
       return false;
     }
 
@@ -255,6 +265,7 @@ public:
 
   bool finalize() {
     if (!_initialized) {
+      _last_error = "Tried to finalize uninitilized image";
       return false;
     }
 
@@ -263,7 +274,12 @@ public:
     }
 
     // Release so we can run close manually and capture possible errors
-    return GIF_OK == EGifCloseFile(_gif.release(), nullptr);
+    if (GIF_OK != EGifCloseFile(_gif.release(), nullptr)) {
+      _last_error = "Failed to close file";
+      return false;
+    }
+
+    return true;
   }
 
   bool requires_original_palette() {

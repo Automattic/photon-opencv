@@ -39,7 +39,12 @@ public:
 
   bool add_frame(const Frame &frame) {
     // Only one format supported for now
-    if (_output->size() || "avif" != _format) {
+    if ("avif" != _format) {
+      _last_error = "Expected avif format, got " + _format;
+      return false;
+    }
+    if (_output->size()) {
+      _last_error = "Image already encoded";
       return false;
     }
     const heif_compression_format heif_format = heif_compression_AV1;
@@ -67,6 +72,7 @@ public:
     }
     encoder.reset(raw_encoder);
     if (error.code != heif_error_Ok) {
+      _last_error = "Failed to get internal encoder";
       return false;
     }
 
@@ -121,6 +127,7 @@ public:
         &raw_image);
     image.reset(raw_image);
     if (error.code != heif_error_Ok) {
+      _last_error = "Failed to create image";
       return false;
     }
 
@@ -134,6 +141,7 @@ public:
           frame.img.rows,
           8);
       if (error.code != heif_error_Ok) {
+        _last_error = "Failed to add image plane";
         return false;
       }
 
@@ -160,6 +168,7 @@ public:
         options.get(),
         nullptr);
     if (error.code != heif_error_Ok) {
+      _last_error = "Failed to encode image";
       return false;
     }
 
@@ -182,6 +191,7 @@ public:
         &simple_ram_copier,
         _output);
     if (error.code != heif_error_Ok) {
+      _last_error = "Failed to write to RAM";
       return false;
     }
 
@@ -189,7 +199,12 @@ public:
   }
 
   bool finalize() {
-    return _output->size();
+    if (!_output->size()) {
+      _last_error = "No frames";
+      return false;
+    }
+
+    return true;
   }
 };
 

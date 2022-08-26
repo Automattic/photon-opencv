@@ -20,6 +20,7 @@ public:
 
   bool add_frame(const Frame &frame) {
     if (_output->size()) {
+      _last_error = "Already encoded";
       return false;
     }
 
@@ -58,6 +59,7 @@ public:
           img_parameters);
     }
     catch (cv::Exception &e) {
+      _last_error = e.what();
       return false;
     }
 

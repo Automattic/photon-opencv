@@ -11,6 +11,7 @@ protected:
 
   bool _init_state(const Frame &frame) {
     if (!msf_gif_begin(&_gif_state, frame.canvas_width, frame.canvas_height)) {
+      _last_error = "Failed to initialize encoding state";
       return false;
     }
 
@@ -60,6 +61,7 @@ public:
 
   bool add_frame(const Frame &frame) {
     if ("gif" != _format) {
+      _last_error = "Expected gif format, got " + _format;
       return false;
     }
 
@@ -123,6 +125,7 @@ public:
           delay,
           16,
           img.step)) {
+      _last_error = "Failed to encode frame";
       return false;
     }
 
@@ -139,6 +142,7 @@ public:
 
   bool finalize() {
     if (!_initialized) {
+      _last_error = "Not initialized";
       return false;
     }
 
@@ -147,6 +151,9 @@ public:
     if (success) {
       _output->resize(result.dataSize);
       memcpy(_output->data(), result.data, result.dataSize);
+    }
+    else {
+      _last_error = "Failed to end encoding";
     }
 
     msf_gif_free(result);
