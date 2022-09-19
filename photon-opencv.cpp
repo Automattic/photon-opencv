@@ -424,29 +424,30 @@ protected:
     _preserve_palette = false;
 
     Exiv2::Image::AutoPtr exiv_img;
+    bool exiv2_ok = true;
     try {
       exiv_img = Exiv2::ImageFactory::open(
         (Exiv2::byte *) _raw_image_data.data(), _raw_image_data.size());
     }
     catch (Exiv2::Error &error) {
-      _last_error = "Exiv2 failed to open image: ";
-      _last_error += error.what();
-      _raw_image_data.clear();
-      return false;
+      // Failing to open is not critical, but it requires us to
+      // try to decode the image to get the proper information
+      exiv2_ok = false;
     }
 
-    try {
-      exiv_img->readMetadata();
-    }
-    catch(Exiv2::Error &error) {
-      // Failing to read the metadata is not critical, but it requires us to
-      // try to decode the image to get the proper information early
-      _setupdecoder(false);
-      _loadnextframe(false);
-      _header_channels = _frame.img.channels();
+    int image_type = Exiv2::ImageType::none;
+    if (exiv2_ok) {
+      try {
+        image_type = exiv_img->imageType();
+        exiv_img->readMetadata();
+      }
+      catch(Exiv2::Error &error) {
+        exiv2_ok = false;
+      }
     }
 
-    switch (exiv_img->imageType()) {
+    _header_channels = -1;
+    switch (image_type) {
       case Exiv2::ImageType::png:
         _format = "png";
         _header_channels = _getchannelsfromrawpng();
@@ -471,24 +472,28 @@ protected:
         break;
 
       default:
-        // Default to jpeg. Load the first frame early if we haven't already
+        // Default to jpeg
         _format = "jpeg";
         _force_reencode = true;
-        if (_frame.empty) {
-          _setupdecoder(false);
-          _loadnextframe(false);
-          _header_channels = _frame.img.channels();
-        }
         break;
     }
 
-    auto &exif = exiv_img->exifData();
-    Exiv2::ExifKey orientation_key("Exif.Image.Orientation");
-    auto orientation_pos = exif.findKey(orientation_key);
+    // Unable to infer the number of channels without decoding
+    if (-1 == _header_channels) {
+      _setupdecoder(false);
+      _loadnextframe(false);
+      _header_channels = _frame.img.channels();
+    }
 
     _original_orientation.release();
-    if (orientation_pos != exif.end()) {
-      _original_orientation = orientation_pos->getValue();
+    if (exiv2_ok) {
+      auto &exif = exiv_img->exifData();
+      Exiv2::ExifKey orientation_key("Exif.Image.Orientation");
+      auto orientation_pos = exif.findKey(orientation_key);
+
+      if (orientation_pos != exif.end()) {
+        _original_orientation = orientation_pos->getValue();
+      }
     }
 
     _expected_width = _frame.empty?
@@ -496,7 +501,7 @@ protected:
     _expected_height = _frame.empty?
       exiv_img->pixelHeight() : _frame.canvas_height;
 
-    if (exiv_img->iccProfileDefined()) {
+    if (exiv2_ok && exiv_img->iccProfileDefined()) {
       const Exiv2::DataBuf *profile = exiv_img->iccProfile();
       _icc_profile.resize(profile->size_);
       std::memcpy(_icc_profile.data(), profile->pData_, profile->size_);
