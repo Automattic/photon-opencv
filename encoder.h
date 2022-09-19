@@ -4,6 +4,7 @@ protected:
 
 public:
   Encoder() {};
+  virtual ~Encoder() {};
   virtual bool add_frame(const Frame &frame) = 0;
   virtual bool finalize() = 0;
 

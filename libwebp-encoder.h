@@ -7,9 +7,16 @@ protected:
   std::unique_ptr<WebPMux, decltype(&WebPMuxDelete)> _mux;
   int _delay_error;
   struct WebPMuxFrameInfo _next;
-  std::vector<WebPData> _encoded_frames;
-  bool _lossless;
+  std::vector<
+      std::unique_ptr<WebPMemoryWriter, void (*) (WebPMemoryWriter *)>>
+      _encoded_frames;
   cv::Mat _state;
+  WebPConfig _config;
+
+  static void _delete_writer(WebPMemoryWriter *writer) {
+    WebPMemoryWriterClear(writer);
+    delete writer;
+  }
 
   bool _init_mux(const Frame &frame) {
     _mux.reset(WebPMuxNew());
@@ -32,11 +39,58 @@ protected:
       return false;
     }
 
+    bool lossless = false;
     auto lossless_option = _options->find("webp:lossless");
     if (lossless_option != _options->end()
         && "true" == lossless_option->second) {
-      _lossless = true;
+      lossless = true;
     }
+
+    // Lower is faster, higher is slower, but better (range: [0-6])
+    int method = 1;
+    auto method_option = _options->find("webp:method");
+    if (method_option != _options->end()) {
+      try {
+        method = stoi(method_option->second);
+      }
+      catch (const std::invalid_argument &e) {
+        method = -1;
+      }
+      if (method < 0 || method > 6) {
+        _last_error =
+          "Invalid value for method option: Expected int between 0 and 6";
+        return false;
+      }
+    }
+
+    int lossless_effort = 35;
+    auto lossless_effort_option = _options->find("webp:lossless_effort");
+    if (lossless_effort_option != _options->end()) {
+      try {
+        lossless_effort = stoi(lossless_effort_option->second);
+      }
+      catch (const std::invalid_argument &e) {
+        lossless_effort = -1;
+      }
+      if (lossless_effort < 0 || lossless_effort > 100) {
+        _last_error = "Invalid value for lossless effort option: "
+          "Expected int between 0 and 100";
+        return false;
+      }
+    }
+
+    WebPConfigInit(&_config);
+    _config.lossless = lossless;
+    if (lossless) {
+      // Quality indicates the effort put into compression, maximize speed
+      _config.quality = lossless_effort;
+    }
+    else {
+      _config.quality = _quality;
+      _config.alpha_quality = _quality;
+    }
+    _config.thread_level = 1;
+    _config.method = method;
 
     if (frame.may_dispose_to_previous) {
       _state = cv::Mat::zeros(frame.canvas_height,
@@ -60,27 +114,32 @@ protected:
       _next.dispose_method = WEBP_MUX_DISPOSE_NONE;
       _next.blend_method = WEBP_MUX_BLEND;
 
-      uint8_t *encoded_data;
       uint32_t pixel = 0;
-      int size = WebPEncodeLosslessBGRA((uint8_t *) &pixel,
-          1,
-          1,
-          1,
-          &encoded_data);
+      WebPPicture picture;
+      WebPPictureInit(&picture);
+      picture.use_argb = 1;
+      picture.argb = &pixel;
+      picture.argb_stride = 1;
+      picture.width = 1;
+      picture.height = 1;
 
-      if (!size) {
+      _encoded_frames.emplace_back(new WebPMemoryWriter, _delete_writer);
+      WebPMemoryWriterInit(_encoded_frames.back().get());
+      picture.writer = WebPMemoryWrite;
+      picture.custom_ptr = _encoded_frames.back().get();
+
+      bool encode_ok = WebPEncode(&_config, &picture);
+      // WebPEncode may allocate new buffers that need to be freed
+      WebPPictureFree(&picture);
+      if (!encode_ok) {
         _last_error = "Failed to encode dummy frame";
         return false;
       }
-
-      WebPData encoded_frame;
-      encoded_frame.bytes = encoded_data;
-      encoded_frame.size = size;
-      _encoded_frames.push_back(encoded_frame);
     }
 
     _next.duration = _delay_error;
-    _next.bitstream = _encoded_frames.back();
+    _next.bitstream.bytes = _encoded_frames.back()->mem;
+    _next.bitstream.size = _encoded_frames.back()->size;
     _delay_error = 0;
 
     if (WEBP_MUX_OK != WebPMuxPushFrame(_mux.get(), &_next, 0)) {
@@ -104,13 +163,6 @@ public:
 
     _output->clear();
     _delay_error = 0;
-    _lossless = false;
-  }
-
-  ~LibWebP_Encoder() {
-    for (auto frame : _encoded_frames) {
-      WebPDataClear(&frame);
-    }
   }
 
   bool add_frame(const Frame &frame) {
@@ -178,33 +230,28 @@ public:
     _next.blend_method = Frame::BLENDING_BLEND == frame.blending?
       WEBP_MUX_BLEND : WEBP_MUX_NO_BLEND;
 
-    size_t size;
-    uint8_t *encoded_data;
-    if (_lossless) {
-      size = WebPEncodeLosslessBGRA(img.data,
-          img.cols,
-          img.rows,
-          img.step,
-          &encoded_data);
-    }
-    else {
-      size = WebPEncodeBGRA(img.data,
-          img.cols,
-          img.rows,
-          img.step,
-          _quality,
-          &encoded_data);
-    }
+    WebPPicture picture;
+    WebPPictureInit(&picture);
+    picture.use_argb = 1;
+    picture.argb = (uint32_t *) img.data;
+    picture.argb_stride = img.step / 4;
+    picture.width = img.cols;
+    picture.height = img.rows;
 
-    if (!size) {
+    _encoded_frames.emplace_back(new WebPMemoryWriter, _delete_writer);
+    WebPMemoryWriterInit(_encoded_frames.back().get());
+    picture.writer = WebPMemoryWrite;
+    picture.custom_ptr = _encoded_frames.back().get();
+
+    bool encode_ok = WebPEncode(&_config, &picture);
+    // WebPEncode may allocate new buffers that need to be freed
+    // The argb buffer isn't freed twice as the library keeps track of what
+    // was allocated by it or by the user
+    WebPPictureFree(&picture);
+    if (!encode_ok) {
       _last_error = "Failed to encode image data";
       return false;
     }
-
-    WebPData encoded_frame;
-    encoded_frame.bytes = encoded_data;
-    encoded_frame.size = size;
-    _encoded_frames.push_back(encoded_frame);
 
     _delay_error += frame.delay;
 

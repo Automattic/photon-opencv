@@ -1,6 +1,7 @@
 class Decoder {
 public:
   Decoder() {};
+  virtual ~Decoder() {};
   virtual bool loaded() = 0;
   virtual void reset() = 0;
   virtual bool get_next_frame(Frame &dst) = 0;
