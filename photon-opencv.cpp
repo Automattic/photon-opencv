@@ -10,9 +10,6 @@
 #include <lcms2.h>
 #include <libheif/heif.h>
 #include <gif_lib.h>
-#define MSF_USE_ALPHA
-#define MSF_GIF_BGR
-#define MSF_GIF_IMPL
 #include <msf_gif.h>
 #include <webp/demux.h>
 #include <webp/encode.h>
