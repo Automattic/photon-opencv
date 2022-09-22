@@ -30,6 +30,7 @@
 #include "msfgif-encoder.h"
 #include "libwebp-decoder.h"
 #include "libwebp-encoder.h"
+#include "libwebp-full-frame-encoder.h"
 #include "libheif-decoder.h"
 #include "libheif-encoder.h"
 
@@ -746,11 +747,20 @@ protected:
             &output_buffer));
     }
     else if ("webp" == _format && _decoder->provides_animation()) {
-      encoder.reset(new LibWebP_Encoder(
-            _format,
-            quality,
-            &_image_options,
-            &output_buffer));
+      if (_decoder->provides_optimized_frames()) {
+        encoder.reset(new LibWebP_Encoder(
+              _format,
+              quality,
+              &_image_options,
+              &output_buffer));
+      }
+      else {
+        encoder.reset(new LibWebP_Full_Frame_Encoder(
+              _format,
+              quality,
+              &_image_options,
+              &output_buffer));
+      }
     }
     else if ("gif" == _format && _decoder->provides_animation()) {
       if (_decoder->provides_optimized_frames()) {

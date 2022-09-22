@@ -12,7 +12,7 @@ OBJECTS=photon-opencv.o tempfile.o
 DECODER_HEADERS=decoder.h giflib-decoder.h opencv-decoder.h libwebp-decoder.h \
 	libheif-decoder.h
 ENCODER_HEADERS=encoder.h msfgif-encoder.h opencv-encoder.h libwebp-encoder.h \
-	libheif-encoder.h giflib-encoder.h
+	libwebp-full-frame-encoder.h libheif-encoder.h giflib-encoder.h
 MISC_HEADERS=frame.h tempfile.h gif-palette.h
 
 all: photon-opencv.so
