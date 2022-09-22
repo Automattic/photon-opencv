@@ -175,7 +175,10 @@ public:
       return false;
     }
 
-    if (!frame.empty && frame.img.empty()) {
+    if (!frame.empty
+        && (frame.img.empty()
+          || (1 == frame.img.cols && frame.x & 1 )
+          || (1 == frame.img.rows && frame.y & 1 ))) {
       _delay_error += frame.delay;
       return true;
     }
@@ -213,17 +216,21 @@ public:
     // WebP only supports even X and Y
     // It is possible to extend the frame to include one col/row to the
     // top/left. However, this becomes non-trivial with the dispose to
-    // background strategy, or with any non-blending frames. It is possible to
-    // the generate proper cleanup by keeping track of the state, enlarging
+    // background strategy, or with any non-blending frames. It is also possible
+    // to the generate proper cleanup by keeping track of the state, enlarging
     // the frame, and affecting the next frame to include the disposal pixels
     // values for the current one. However, this increases the final file size,
     // as each frame grows, as well as it introduces artifacts when lossy
     // compression is used, as colors may bleed out into the bigger draw area
     // and not get properly covered by the next frame.
-    // Therefore, we go with the simple approach of just snapping the frame
-    // onto a 2x2 grid
-    _next.x_offset = frame.x & ~1;
-    _next.y_offset = frame.y & ~1;
+    // Therefore, we go with the simple approach of dropping the top and left
+    // column and row
+    img = img(cv::Rect(frame.x & 1,
+          frame.y & 1,
+          img.cols - (frame.x & 1),
+          img.rows - (frame.y & 1)));
+    _next.x_offset = (frame.x + 1) & ~1;
+    _next.y_offset = (frame.y + 1) & ~1;
     _next.id = WEBP_CHUNK_ANMF;
     _next.dispose_method = Frame::DISPOSAL_BACKGROUND == frame.disposal?
       WEBP_MUX_DISPOSE_BACKGROUND : WEBP_MUX_DISPOSE_NONE;
