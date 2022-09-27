@@ -1478,7 +1478,7 @@ extern "C" {
     photon_opencv.method<&Photon_OpenCV::setimageprofile>(
       "setimageprofile", {
       Php::ByVal("name", Php::Type::String),
-      Php::ByVal("profile", Php::Type::String),
+      Php::ByVal("profile", Php::Type::Null),
     });
 
     photon_opencv.method<&Photon_OpenCV::getimagetype>("getimagetype");
