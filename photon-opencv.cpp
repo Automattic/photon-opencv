@@ -426,6 +426,7 @@ protected:
     try {
       exiv_img = Exiv2::ImageFactory::open(
         (Exiv2::byte *) _raw_image_data.data(), _raw_image_data.size());
+      exiv_img->readMetadata();
     }
     catch (Exiv2::Error &error) {
       // Failing to open is not critical, but it requires us to
@@ -433,17 +434,7 @@ protected:
       exiv2_ok = false;
     }
 
-    int image_type = Exiv2::ImageType::none;
-    if (exiv2_ok) {
-      try {
-        image_type = exiv_img->imageType();
-        exiv_img->readMetadata();
-      }
-      catch(Exiv2::Error &error) {
-        exiv2_ok = false;
-      }
-    }
-
+    int image_type = exiv2_ok? exiv_img->imageType() : Exiv2::ImageType::none;
     _header_channels = -1;
     switch (image_type) {
       case Exiv2::ImageType::png:
