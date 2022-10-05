@@ -11,13 +11,12 @@ ENCODER_OBJECTS=libwebp-full-frame-encoder.o libwebp-encoder.o \
 	msfgif-encoder.o opencv-encoder.o libheif-encoder.o giflib-encoder.o
 DECODER_OBJECTS=libheif-decoder.o libwebp-decoder.o opencv-decoder.o \
 	giflib-decoder.o
-OBJECTS=$(ENCODER_OBJECTS) $(DECODER_OBJECTS) tempfile.o photon-opencv.o
+OBJECTS=$(ENCODER_OBJECTS) $(DECODER_OBJECTS) tempfile.o photon-opencv.o \
+	frame.o
 
 all: photon-opencv.so
 
 msfgif-encoder.o: vendor/msf_gif.h
-
-opencv-decoder.o: tempfile.o
 
 vendor/msf_gif.h: vendor/msf_gif_bgr.patch vendor/msf_gif_rc.h
 	cp vendor/msf_gif_rc.h "$@"
