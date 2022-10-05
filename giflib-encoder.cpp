@@ -77,8 +77,8 @@ bool Giflib_Encoder::_insert_gcb() {
         extension);
 }
 
-bool Giflib_Encoder::_maybe_insert_frame() {
-  if (_next.empty() && !_delay_error) {
+bool Giflib_Encoder::_maybe_insert_frame(bool finalizing) {
+  if (_next.empty() && !_delay_error && (_inserted_frames || !finalizing)) {
     return true;
   }
 
@@ -131,6 +131,9 @@ bool Giflib_Encoder::_maybe_insert_frame() {
     }
     line += _next.step / sizeof(uint8_t);
   }
+
+  _next = cv::Mat();
+  _inserted_frames++;
 
   return true;
 }
@@ -206,6 +209,7 @@ Giflib_Encoder::Giflib_Encoder(const std::string &format,
   _delay_error = 0;
   _initialized = false;
   _has_global_palette = false;
+  _inserted_frames = 0;
 }
 
 
@@ -224,7 +228,7 @@ bool Giflib_Encoder::add_frame(const Frame &frame) {
     return true;
   }
 
-  if (!_maybe_insert_frame()) {
+  if (!_maybe_insert_frame(false)) {
     return false;
   }
 
@@ -261,7 +265,7 @@ bool Giflib_Encoder::finalize() {
     return false;
   }
 
-  if (!_maybe_insert_frame()) {
+  if (!_maybe_insert_frame(true)) {
     return false;
   }
 

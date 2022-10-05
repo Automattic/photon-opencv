@@ -13,10 +13,11 @@ protected:
   int _next_x;
   int _next_y;
   bool _has_global_palette;
+  int _inserted_frames;
 
   bool _init_state(const Frame &frame);
   bool _insert_gcb();
-  bool _maybe_insert_frame();
+  bool _maybe_insert_frame(bool finalizing);
   cv::Mat _apply_palette(const Frame &frame);
 
 public:
