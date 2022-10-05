@@ -117,6 +117,7 @@ bool Giflib_Decoder::get_next_frame(Frame &dst) {
 
   // Decodes trying not to fail even if the file is malformed
   GifRecordType type;
+  bool successful_decode = false;
   do {
     if (GIF_ERROR == DGifGetRecordType(_gif.get(), &type)) {
       break;
@@ -156,14 +157,6 @@ bool Giflib_Decoder::get_next_frame(Frame &dst) {
 
       SavedImage *si = _gif->SavedImages + _gif->ImageCount - 1;
       const auto &desc = si->ImageDesc;
-      if (desc.Width + desc.Left > _gif->SWidth
-          || desc.Height + desc.Top > _gif->SHeight
-          || desc.Width <= 0
-          || desc.Height <= 0
-          || desc.Left < 0
-          || desc.Top < 0 ) {
-        continue;
-      }
 
       dst.img = cv::Mat(desc.Height,
           desc.Width,
@@ -214,10 +207,31 @@ bool Giflib_Decoder::get_next_frame(Frame &dst) {
         }
       }
 
-      dst.x = desc.Left;
-      dst.y = desc.Top;
+      // Crop to fit canvas, ensured to be possible at this point
+      int left_offset = std::max(0, 0 - desc.Left);
+      int top_offset = std::max(0, 0 - desc.Top);
+      int overflowing_width =
+        std::max(0, desc.Left + desc.Width - _gif->SWidth);
+      int overflowing_height=
+        std::max(0, desc.Top + desc.Height - _gif->SHeight);
+      int overlapping_width = desc.Width - overflowing_width - left_offset;
+      int overlapping_height = desc.Height - overflowing_height - top_offset;
+
+      if (overlapping_width > 0 && overlapping_height > 0) {
+        dst.img = dst.img(cv::Rect(
+              left_offset, top_offset, overlapping_width, overlapping_height));
+        dst.x = desc.Left + left_offset;
+        dst.y = desc.Top + top_offset;
+      }
+      else {
+        // No overlap, replace with dummy frame, which encoders can handle
+        dst.img = cv::Mat();
+        dst.x = 0;
+        dst.y = 0;
+      }
 
       // Success. Break early so next calls gets the next frame
+      successful_decode = true;
       break;
     }
   } while (TERMINATE_RECORD_TYPE != type);
@@ -225,7 +239,7 @@ bool Giflib_Decoder::get_next_frame(Frame &dst) {
   dst.delay = gcb.DelayTime * 10;
   dst.canvas_width = _gif->SWidth;
   dst.canvas_height = _gif->SHeight;
-  dst.empty = dst.img.empty();
+  dst.empty = !successful_decode;
   dst.loops = _loops;
   dst.blending = Frame::BLENDING_BLEND;
   dst.may_dispose_to_previous = _may_dispose_to_previous;
