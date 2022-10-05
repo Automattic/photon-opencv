@@ -717,7 +717,8 @@ protected:
       }
     }
 
-    if (!_decoder.get() && !_setupdecoder()) {
+    if ((!_decoder.get() && !_setupdecoder())
+        || (_frame.empty && !_loadnextframe())) {
       // Compatibility: silently replace image with original if we are unable
       // to decode this late in the process
       _last_error.clear();
@@ -772,12 +773,6 @@ protected:
             quality,
             &_image_options,
             &output_buffer));
-    }
-
-    if (_frame.empty) {
-      if (!_loadnextframe()) {
-        return false;
-      }
     }
 
     _preserve_palette = encoder->requires_original_palette();
