@@ -12,10 +12,11 @@ protected:
       _encoded_frames;
   cv::Mat _state;
   WebPConfig _config;
+  int _inserted_frames;
 
   static void _delete_writer(WebPMemoryWriter *writer);
   bool _init_mux(const Frame &frame);
-  bool _maybe_insert_frame();
+  bool _maybe_insert_frame(bool finalizing);
 
 public:
   LibWebP_Encoder(const std::string &format,

@@ -96,13 +96,14 @@ bool LibWebP_Encoder::_init_mux(const Frame &frame) {
   return true;
 }
 
-bool LibWebP_Encoder::_maybe_insert_frame() {
-  if (_encoded_frames.empty() && !_delay_error) {
+bool LibWebP_Encoder::_maybe_insert_frame(bool finalizing) {
+  bool has_uninserted = (int) _encoded_frames.size() > _inserted_frames;
+  if (!has_uninserted && !_delay_error && (_inserted_frames || !finalizing)) {
     return true;
   }
 
   // Need to insert a delay, but there is no frame. Create a dummy one
-  if (_encoded_frames.empty()) {
+  if (!has_uninserted) {
     _next.x_offset = 0;
     _next.y_offset = 0;
     _next.id = WEBP_CHUNK_ANMF;
@@ -136,11 +137,14 @@ bool LibWebP_Encoder::_maybe_insert_frame() {
   _next.bitstream.bytes = _encoded_frames.back()->mem;
   _next.bitstream.size = _encoded_frames.back()->size;
   _delay_error = 0;
+  _inserted_frames = 0;
 
   if (WEBP_MUX_OK != WebPMuxPushFrame(_mux.get(), &_next, 0)) {
     _last_error = "Failed to push frame";
     return false;
   }
+
+  _inserted_frames++;
 
   return true;
 }
@@ -177,7 +181,7 @@ bool LibWebP_Encoder::add_frame(const Frame &frame) {
     return true;
   }
 
-  if (!_maybe_insert_frame()) {
+  if (!_maybe_insert_frame(false)) {
     return false;
   }
 
@@ -332,7 +336,7 @@ bool LibWebP_Encoder::finalize() {
     return false;
   }
 
-  if (!_maybe_insert_frame()) {
+  if (!_maybe_insert_frame(true)) {
     return false;
   }
 
