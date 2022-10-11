@@ -434,6 +434,11 @@ protected:
       exiv2_ok = false;
     }
 
+    if (exiv2_ok && (!exiv_img->pixelWidth() || !exiv_img->pixelHeight())) {
+      // Stop exiv2 use if giberrish data was read
+      exiv2_ok = false;
+    }
+
     int image_type = exiv2_ok? exiv_img->imageType() : Exiv2::ImageType::none;
     _header_channels = -1;
     switch (image_type) {
