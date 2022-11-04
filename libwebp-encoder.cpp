@@ -137,7 +137,6 @@ bool LibWebP_Encoder::_maybe_insert_frame(bool finalizing) {
   _next.bitstream.bytes = _encoded_frames.back()->mem;
   _next.bitstream.size = _encoded_frames.back()->size;
   _delay_error = 0;
-  _inserted_frames = 0;
 
   if (WEBP_MUX_OK != WebPMuxPushFrame(_mux.get(), &_next, 0)) {
     _last_error = "Failed to push frame";
@@ -161,6 +160,7 @@ LibWebP_Encoder::LibWebP_Encoder(const std::string &format,
 
   _output->clear();
   _delay_error = 0;
+  _inserted_frames = 0;
 }
 
 bool LibWebP_Encoder::add_frame(const Frame &frame) {
