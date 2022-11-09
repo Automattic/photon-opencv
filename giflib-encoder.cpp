@@ -185,7 +185,8 @@ cv::Mat Giflib_Encoder::_apply_palette(const Frame &frame) {
       // Should throw exception if color is not in palette
       dst_line[j] = palette->get_index(src_line[j][0],
           src_line[j][1],
-          src_line[j][2]);
+          src_line[j][2],
+          frame.gif_transparent_index);
     }
     dst_line += dst.step / sizeof(uint8_t);
     src_line += src.step / sizeof(cv::Vec4b);

@@ -12,7 +12,7 @@ ENCODER_OBJECTS=libwebp-full-frame-encoder.o libwebp-encoder.o \
 DECODER_OBJECTS=libheif-decoder.o libwebp-decoder.o opencv-decoder.o \
 	giflib-decoder.o
 OBJECTS=$(ENCODER_OBJECTS) $(DECODER_OBJECTS) tempfile.o photon-opencv.o \
-	frame.o
+	frame.o gif-palette.o
 
 all: photon-opencv.so
 
