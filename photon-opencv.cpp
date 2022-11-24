@@ -970,6 +970,11 @@ public:
   static const int ORIENTATION_LEFTBOTTOM = 8;
 
   Photon_OpenCV() {
+    int opencv_threads = 2;
+    if ( Php::SERVER["PHOTON_OPENCV_THREADS"] ) {
+        opencv_threads = Php::SERVER["PHOTON_OPENCV_THREADS"];
+    }
+    cv::setNumThreads( opencv_threads );
     /* Static local intilization is thread safe */
     static std::once_flag initialized;
     std::call_once(initialized, _initialize);
