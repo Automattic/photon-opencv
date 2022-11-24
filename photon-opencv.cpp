@@ -970,6 +970,8 @@ public:
   static const int ORIENTATION_LEFTBOTTOM = 8;
 
   Photon_OpenCV() {
+    cv::setNumThreads(Php::ini_get("photon.opencv_threads"));
+
     /* Static local intilization is thread safe */
     static std::once_flag initialized;
     std::call_once(initialized, _initialize);
@@ -1383,7 +1385,7 @@ cmsHPROFILE Photon_OpenCV::_srgb_profile = nullptr;
 
 extern "C" {
   PHPCPP_EXPORT void *get_module() {
-    static Php::Extension extension("photon-opencv", "0.2.27");
+    static Php::Extension extension("photon-opencv", "0.2.28");
 
     Php::Class<Photon_OpenCV> photon_opencv("Photon_OpenCV");
 
@@ -1514,6 +1516,9 @@ extern "C" {
     });
 
     extension.add(std::move(photon_opencv));
+
+    // Default to 2 if not set
+    extension.add(Php::Ini("photon.opencv_threads", 2));
 
     return extension;
   }
