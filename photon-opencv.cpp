@@ -970,18 +970,11 @@ public:
   static const int ORIENTATION_LEFTBOTTOM = 8;
 
   Photon_OpenCV() {
-    // Lower default # of threads to ceil( Cores / 4 )
-    cv::setNumThreads( ceil( cv::getNumberOfCPUs() / 4 ) );
+    cv::setNumThreads(Php::ini_get("photon.opencv_threads"));
+
     /* Static local intilization is thread safe */
     static std::once_flag initialized;
     std::call_once(initialized, _initialize);
-  }
-
-  void setopencvnumthreads(Php::Parameters &params) {
-      if ( params.empty() ) {
-           return;
-      }
-      cv::setNumThreads( params[0] );
   }
 
   void readimageblob(Php::Parameters &params) {
@@ -1436,7 +1429,6 @@ extern "C" {
     photon_opencv.constant("ORIENTATION_LEFTBOTTOM",
         Photon_OpenCV::ORIENTATION_LEFTBOTTOM);
 
-    photon_opencv.method<&Photon_OpenCV::setopencvnumthreads>("setopencvnumthreads");
     photon_opencv.method<&Photon_OpenCV::readimageblob>("readimageblob", {
       Php::ByRef("raw_image_data", Php::Type::String),
     });
@@ -1524,6 +1516,9 @@ extern "C" {
     });
 
     extension.add(std::move(photon_opencv));
+
+    // Default to 2 if not set
+    extension.add(Php::Ini("photon.opencv_threads", 2));
 
     return extension;
   }
