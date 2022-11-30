@@ -74,3 +74,11 @@ bool LibWebP_Decoder::get_next_frame(Frame &dst) {
 bool LibWebP_Decoder::provides_animation() {
   return true;
 }
+
+std::string LibWebP_Decoder::default_format() {
+  return "webp";
+}
+
+bool LibWebP_Decoder::default_format_is_accurate() {
+  return true;
+}

@@ -440,7 +440,6 @@ protected:
     }
 
     int image_type = exiv2_ok? exiv_img->imageType() : Exiv2::ImageType::none;
-    _header_channels = -1;
     switch (image_type) {
       case Exiv2::ImageType::png:
         _format = "png";
@@ -466,17 +465,13 @@ protected:
         break;
 
       default:
-        // Default to jpeg
-        _format = "jpeg";
-        _force_reencode = true;
+        // Unexpected format, often an exiv2 limitation. Decode to find out
+        _setupdecoder(false);
+        _loadnextframe(false);
+        _header_channels = _frame.img.channels();
+        _force_reencode = !_decoder->default_format_is_accurate();
+        _format = _decoder->default_format();
         break;
-    }
-
-    // Unable to infer the number of channels without decoding
-    if (-1 == _header_channels) {
-      _setupdecoder(false);
-      _loadnextframe(false);
-      _header_channels = _frame.img.channels();
     }
 
     _original_orientation.release();

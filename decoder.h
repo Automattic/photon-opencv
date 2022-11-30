@@ -18,4 +18,12 @@ public:
   virtual bool provides_animation() {
     return false;
   }
+
+  virtual std::string default_format() {
+    return "jpeg";
+  }
+
+  virtual bool default_format_is_accurate() {
+    return false;
+  }
 };

@@ -17,4 +17,6 @@ public:
   bool get_next_frame(Frame &dst);
   bool provides_optimized_frames();
   bool provides_animation();
+  std::string default_format();
+  bool default_format_is_accurate();
 };

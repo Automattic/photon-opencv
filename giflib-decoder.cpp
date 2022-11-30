@@ -268,3 +268,11 @@ bool Giflib_Decoder::provides_optimized_frames() {
 bool Giflib_Decoder::provides_animation() {
   return true;
 }
+
+std::string Giflib_Decoder::default_format() {
+  return "gif";
+}
+
+bool Giflib_Decoder::default_format_is_accurate() {
+  return true;
+}
