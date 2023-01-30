@@ -788,6 +788,10 @@ protected:
         _last_error = encoder->get_last_error();
         return false;
       }
+
+      if (!encoder->supports_multiple_frames()) {
+        break;
+      }
     } while (_loadnextframe());
 
     _frame.img = cv::Mat();

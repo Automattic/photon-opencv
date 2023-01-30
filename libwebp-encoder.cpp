@@ -352,3 +352,6 @@ bool LibWebP_Encoder::finalize() {
   return true;
 }
 
+bool LibWebP_Encoder::supports_multiple_frames() {
+  return true;
+}

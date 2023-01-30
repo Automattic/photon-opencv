@@ -12,6 +12,10 @@ public:
     return false;
   }
 
+  virtual bool supports_multiple_frames() {
+    return false;
+  }
+
   std::string get_last_error() {
     return std::move(_last_error);
   }

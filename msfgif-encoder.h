@@ -19,4 +19,5 @@ public:
       std::vector<uint8_t> *output);
   bool add_frame(const Frame &frame);
   bool finalize();
+  bool supports_multiple_frames();
 };

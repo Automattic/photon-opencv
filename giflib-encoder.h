@@ -28,4 +28,5 @@ public:
   bool add_frame(const Frame &frame);
   bool finalize();
   bool requires_original_palette();
+  bool supports_multiple_frames();
 };

@@ -282,3 +282,7 @@ bool Giflib_Encoder::finalize() {
 bool Giflib_Encoder::requires_original_palette() {
   return true;
 }
+
+bool Giflib_Encoder::supports_multiple_frames() {
+  return true;
+}

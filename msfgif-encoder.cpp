@@ -159,3 +159,7 @@ bool Msfgif_Encoder::finalize() {
   msf_gif_free(result);
   return success;
 }
+
+bool Msfgif_Encoder::supports_multiple_frames() {
+  return true;
+}
