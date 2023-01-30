@@ -164,3 +164,7 @@ bool LibWebP_Full_Frame_Encoder::finalize() {
 bool LibWebP_Full_Frame_Encoder::supports_multiple_frames() {
   return true;
 }
+
+bool LibWebP_Full_Frame_Encoder::supports_optimized_frames() {
+  return true;
+}

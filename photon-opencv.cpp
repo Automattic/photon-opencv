@@ -784,6 +784,11 @@ protected:
         operation();
       }
 
+      if (_decoder->provides_optimized_frames()
+          && !encoder->supports_optimized_frames()) {
+        _expandtocanvas();
+      }
+
       if (!encoder->add_frame(_frame)) {
         _last_error = encoder->get_last_error();
         return false;
@@ -938,6 +943,46 @@ protected:
     if (_frame.y + _frame.img.rows > _frame.canvas_height) {
       _frame.canvas_height = _frame.y + _frame.img.rows;
     }
+  }
+
+  void _expandtocanvas() {
+    if (_frame.img.empty()) {
+      return;
+    }
+
+    if (!_frame.x
+        && !_frame.y
+        && _frame.img.cols == _frame.canvas_width
+        && _frame.img.rows == _frame.canvas_height) {
+      return;
+    }
+
+    const cv::Scalar bg_color_from_channels[] = {
+      cv::Scalar(0, 0, 0, 0),
+      cv::Scalar(255, 0, 0, 0),
+      cv::Scalar(255, 0, 0, 0),
+      cv::Scalar(255, 255, 255, 0),
+      cv::Scalar(255, 255, 255, 0),
+    };
+
+    cv::Mat full_img(_frame.canvas_width,
+        _frame.canvas_height,
+        _frame.img.type(),
+        bg_color_from_channels[_frame.img.channels()]);
+
+    cv::Rect canvas_intersection = cv::Rect(0, 0, full_img.cols, full_img.rows)
+      & cv::Rect(_frame.x, _frame.y, _frame.img.cols, _frame.img.rows);
+    cv::Rect frame_intersection =
+      cv::Rect(-_frame.x, -_frame.y, full_img.cols, full_img.rows)
+      & cv::Rect(0, 0, _frame.img.cols, _frame.img.rows);
+
+    if (canvas_intersection.width > 0 && canvas_intersection.height > 0) {
+      _frame.img(frame_intersection).copyTo(full_img(canvas_intersection));
+    }
+
+    _frame.x = 0;
+    _frame.y = 0;
+    _frame.img = full_img;
   }
 
 public:

@@ -286,3 +286,7 @@ bool Giflib_Encoder::requires_original_palette() {
 bool Giflib_Encoder::supports_multiple_frames() {
   return true;
 }
+
+bool Giflib_Encoder::supports_optimized_frames() {
+  return true;
+}

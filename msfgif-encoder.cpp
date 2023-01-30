@@ -163,3 +163,7 @@ bool Msfgif_Encoder::finalize() {
 bool Msfgif_Encoder::supports_multiple_frames() {
   return true;
 }
+
+bool Msfgif_Encoder::supports_optimized_frames() {
+  return true;
+}

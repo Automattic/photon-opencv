@@ -26,4 +26,5 @@ public:
   bool add_frame(const Frame &frame);
   bool finalize();
   bool supports_multiple_frames();
+  bool supports_optimized_frames();
 };

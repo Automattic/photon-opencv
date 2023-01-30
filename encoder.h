@@ -16,6 +16,10 @@ public:
     return false;
   }
 
+  virtual bool supports_optimized_frames() {
+    return false;
+  }
+
   std::string get_last_error() {
     return std::move(_last_error);
   }

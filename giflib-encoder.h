@@ -29,4 +29,5 @@ public:
   bool finalize();
   bool requires_original_palette();
   bool supports_multiple_frames();
+  bool supports_optimized_frames();
 };
