@@ -1437,7 +1437,7 @@ cmsHPROFILE Photon_OpenCV::_srgb_profile = nullptr;
 
 extern "C" {
   PHPCPP_EXPORT void *get_module() {
-    static Php::Extension extension("photon-opencv", "0.2.29");
+    static Php::Extension extension("photon-opencv", "0.2.30");
 
     Php::Class<Photon_OpenCV> photon_opencv("Photon_OpenCV");
 
