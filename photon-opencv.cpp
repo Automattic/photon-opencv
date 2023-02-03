@@ -985,6 +985,10 @@ protected:
     _frame.img = full_img;
   }
 
+  bool _requiresreencoding() {
+    return _force_reencode || _operations.size();
+  }
+
 public:
   /* Gmagick constant replacements */
   static const int CHANNEL_OPACITY = 7;
@@ -1062,7 +1066,7 @@ public:
     }
 
     // No ops, we can return the original image
-    if (!_force_reencode && _operations.empty()) {
+    if (!_requiresreencoding()) {
       std::ofstream output(output_path,
           std::ios::out | std::ios::binary);
       output << _raw_image_data;
@@ -1090,7 +1094,7 @@ public:
     _checkimageloaded();
 
     // No ops, we can return the original image
-    if (!_force_reencode && _operations.empty()) {
+    if (!_requiresreencoding()) {
       return _raw_image_data;
     }
 
@@ -1424,6 +1428,10 @@ public:
     _expected_width += width*2;
     _expected_height += height*2;
   }
+
+  Php::Value blobrequiresreencoding() {
+    return _requiresreencoding();
+  }
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = nullptr;
 
@@ -1558,6 +1566,10 @@ extern "C" {
       Php::ByVal("key", Php::Type::String),
       Php::ByVal("value", Php::Type::String),
     });
+
+    // Not in Gmagick
+    photon_opencv.method<&Photon_OpenCV::blobrequiresreencoding>(
+        "blobrequiresreencoding");
 
     extension.add(std::move(photon_opencv));
 
