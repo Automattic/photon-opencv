@@ -1218,6 +1218,16 @@ public:
     // Exif not reset intentionally, GraphicsMagick doesn't support it for Jpeg
   }
 
+  Php::Value getimageorientation() {
+    _checkimageloaded();
+
+    // Numerical values in exif spec match library defines
+    int orientation = _original_orientation.get()?
+      _original_orientation.get()->toLong() : 0;
+
+    return orientation > 0 && orientation <= 8? orientation : 0;
+  }
+
   void setimageprofile(Php::Parameters &params) {
     std::string name = params[0].stringValue();
     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
@@ -1519,6 +1529,8 @@ extern "C" {
     photon_opencv.method<&Photon_OpenCV::autoorientimage>("autoorientimage", {
       Php::ByVal("current_orientation", Php::Type::Numeric),
     });
+    photon_opencv.method<&Photon_OpenCV::getimageorientation>(
+        "getimageorientation");
 
     photon_opencv.method<&Photon_OpenCV::setimageprofile>(
       "setimageprofile", {
