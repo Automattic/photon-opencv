@@ -33,7 +33,7 @@
 
 #define _checkimageloaded() { \
   if (_raw_image_data.empty()) { \
-    throw Php::Exception("Can not process empty object"); \
+    throw Php::Exception("Cannot process empty object"); \
   } \
 }
 
