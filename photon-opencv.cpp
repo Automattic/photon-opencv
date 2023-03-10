@@ -423,6 +423,7 @@ protected:
 
     Exiv2::Image::AutoPtr exiv_img;
     bool exiv2_ok = true;
+    Exiv2::enableBMFF();
     try {
       exiv_img = Exiv2::ImageFactory::open(
         (Exiv2::byte *) _raw_image_data.data(), _raw_image_data.size());
@@ -436,6 +437,13 @@ protected:
 
     if (exiv2_ok && (!exiv_img->pixelWidth() || !exiv_img->pixelHeight())) {
       // Stop exiv2 use if giberrish data was read
+      exiv2_ok = false;
+    }
+
+    if (exiv2_ok &&
+        exiv_img->imageType() == Exiv2::ImageType::bmff &&
+        _raw_image_data.compare(8, 4, "avif")) {
+      // Only let static avif through
       exiv2_ok = false;
     }
 
@@ -462,6 +470,12 @@ protected:
       case Exiv2::ImageType::gif:
         _format = "gif";
         _header_channels = _getchannelsfromrawgif();
+        break;
+
+      case Exiv2::ImageType::bmff:
+        // Other formats were filtered out early
+        _format = "avif";
+        _header_channels = _getchannelsfromrawavif();
         break;
 
       default:
@@ -659,6 +673,38 @@ protected:
 
     return rgb? 3 : 1;
   }
+
+  int _getchannelsfromrawavif() {
+    std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
+      heif_context_alloc(), &heif_context_free);
+
+    heif_error error;
+
+    error = heif_context_read_from_memory_without_copy(context.get(),
+      (void *) _raw_image_data.data(),
+      _raw_image_data.size(),
+      nullptr);
+    if (error.code) {
+      // Shouldn't happen, default to the most common value
+      return 3;
+    }
+
+    std::unique_ptr<heif_image_handle,
+      decltype(&heif_image_handle_release)>
+      handle(nullptr, &heif_image_handle_release);
+    heif_image_handle *raw_handle = nullptr;
+    error = heif_context_get_primary_image_handle(context.get(),
+      &raw_handle);
+    handle.reset(raw_handle);
+    if (error.code) {
+      // Shouldn't happen, default to the most common value
+      return 3;
+    }
+
+    // Assumes no grayscale images for simplicity
+    return heif_image_handle_has_alpha_channel(handle.get())? 4 : 3;
+  }
+
 
   int _getchannelsfromrawwebp() {
     if (_raw_image_data.size() < 32) {
