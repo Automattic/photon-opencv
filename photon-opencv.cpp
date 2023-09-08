@@ -50,7 +50,7 @@ protected:
   int _expected_height;
   int _header_channels;
   bool _force_reencode;
-  Exiv2::Value::AutoPtr _original_orientation;
+  Exiv2::Value::UniquePtr _original_orientation;
   std::map<std::string, std::string> _image_options;
   std::vector<std::function<void()>> _operations;
   std::unique_ptr<Decoder> _decoder;
@@ -421,7 +421,7 @@ protected:
     _force_reencode = false;
     _preserve_palette = false;
 
-    Exiv2::Image::AutoPtr exiv_img;
+    Exiv2::Image::UniquePtr exiv_img;
     bool exiv2_ok = true;
     Exiv2::enableBMFF();
     try {
@@ -447,7 +447,8 @@ protected:
       exiv2_ok = false;
     }
 
-    int image_type = exiv2_ok? exiv_img->imageType() : Exiv2::ImageType::none;
+    Exiv2::ImageType image_type = exiv2_ok?
+      exiv_img->imageType() : Exiv2::ImageType::none;
     switch (image_type) {
       case Exiv2::ImageType::png:
         _format = "png";
@@ -505,9 +506,9 @@ protected:
       exiv_img->pixelHeight() : _frame.canvas_height;
 
     if (exiv2_ok && exiv_img->iccProfileDefined()) {
-      const Exiv2::DataBuf *profile = exiv_img->iccProfile();
-      _icc_profile.resize(profile->size_);
-      std::memcpy(_icc_profile.data(), profile->pData_, profile->size_);
+      const Exiv2::DataBuf profile = exiv_img->iccProfile();
+      _icc_profile.resize(profile.size());
+      std::memcpy(_icc_profile.data(), profile.c_data(), profile.size());
     }
 
     /* Palettes are automatically converted to RGB on decode */
@@ -854,10 +855,10 @@ protected:
     }
 
     /* Manually reinsert orientation exif data if it has meaning */
-    long exif_orientation = _original_orientation.get()?
-      _original_orientation.get()->toLong() : 0;
+    int exif_orientation = _original_orientation.get()?
+      _original_orientation.get()->toUint32() : 0;
     if (exif_orientation > 1 && exif_orientation <= 8) {
-      Exiv2::Image::AutoPtr exiv_img;
+      Exiv2::Image::UniquePtr exiv_img;
       try {
         exiv_img = Exiv2::ImageFactory::open(output_buffer.data(),
             output_buffer.size());
@@ -1210,7 +1211,7 @@ public:
   void autoorientimage(Php::Parameters &params) {
     _checkimageloaded();
 
-    long orientation = params[0];
+    int orientation = params[0];
 
     // Orientation follows exif specs, valid values are in [1,8], 0 is undef
     if (orientation < 0 || orientation > 8) {
@@ -1219,7 +1220,7 @@ public:
 
     if (ORIENTATION_UNDEFINED == orientation) {
       orientation = _original_orientation.get()?
-        _original_orientation.get()->toLong() : ORIENTATION_TOPLEFT;
+        _original_orientation.get()->toUint32() : ORIENTATION_TOPLEFT;
     }
 
     int rotation;
@@ -1269,7 +1270,7 @@ public:
 
     // Numerical values in exif spec match library defines
     int orientation = _original_orientation.get()?
-      _original_orientation.get()->toLong() : 0;
+      _original_orientation.get()->toUint32() : 0;
 
     return orientation > 0 && orientation <= 8? orientation : 0;
   }
@@ -1285,7 +1286,7 @@ public:
       }
       // Don't force reencoding if it results in no visible change
       int orientation = _original_orientation.get()?
-        _original_orientation.get()->toLong() : 0;
+        _original_orientation.get()->toUint32() : 0;
       // All valid values except TOPLEFT
       if (orientation > 1 && orientation <= 8) {
         _force_reencode = true;
