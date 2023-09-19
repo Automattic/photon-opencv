@@ -131,7 +131,7 @@ protected:
     cmsHTRANSFORM transform = cmsCreateTransform(
       embedded_profile, storage_format,
       _srgb_profile, TYPE_BGR_8,
-      INTENT_PERCEPTUAL, 0
+      INTENT_PERCEPTUAL, cmsFLAGS_BLACKPOINTCOMPENSATION
     );
 
     if (!transform) {
