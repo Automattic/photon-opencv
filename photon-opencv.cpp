@@ -66,7 +66,7 @@ protected:
 
   void _enforce8u() {
     if (CV_8U != _frame.img.depth()) {
-      /* Proper convertion is mostly guess work, but it's fairly rare and
+      /* Proper conversion is mostly guess work, but it's fairly rare and
          these are reasonable assumptions */
       double alpha, beta;
       switch (_frame.img.depth()) {
@@ -190,7 +190,7 @@ protected:
   }
 
   static int _gmagickfilter2opencvinter(int filter, int default_filter) {
-    /* Disable custom filters for now. Photon uses lanczos to circunvent an
+    /* Disable custom filters for now. Photon uses lanczos to circumvent an
        issue that does not exist here. See:
        https://code.trac.wordpress.org/ticket/62
        https://sourceforge.net/p/graphicsmagick/bugs/381/ */

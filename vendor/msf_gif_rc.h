@@ -425,7 +425,7 @@ static uint8_t * msf_compress_frame(void * allocContext, int width, int height, 
 
     int lastCode = framesCompatible && frame.pixels[0] == previous.pixels[0]? 0 : tlb[frame.pixels[0]];
     MsfTimeLoop("compress") for (int i = 1; i < width * height; ++i) {
-        //PERF: branching vs. branchless version of this line is observed to have no discernable impact on speed
+        //PERF: branching vs. branchless version of this line is observed to have no discernible impact on speed
         int color = framesCompatible && frame.pixels[i] == previous.pixels[i]? 0 : tlb[frame.pixels[i]];
         //PERF: branchless version must use && otherwise it will segfault on frame 1, but it's well-predicted so OK
         // int color = (!(framesCompatible && frame.pixels[i] == previous.pixels[i])) * tlb[frame.pixels[i]];

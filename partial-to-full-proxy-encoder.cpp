@@ -37,7 +37,7 @@ bool Partial_To_Full_Proxy_Encoder::add_frame(const Frame &frame) {
     _initialize_full_frame(frame);
   }
 
-  // Valid empty frames might come from crops or agressive resizing
+  // Valid empty frames might come from crops or aggressive resizing
   if (frame.empty || frame.img.empty()) {
     _full_frame.delay += frame.delay;
     return true;

@@ -72,7 +72,7 @@ void Libheif_Decoder::reset() {
       _frame,
       has_alpha? cv::COLOR_RGBA2BGRA : cv::COLOR_RGB2BGR);
 
-  // This redundand ICC profile extraction code can be removed when
+  // This redundant ICC profile extraction code can be removed when
   // exiv2 0.27.4 is released, as it should support the new formats
   size_t profile_size = heif_image_get_raw_color_profile_size(
     h_image.get());

@@ -262,7 +262,7 @@ bool Giflib_Encoder::add_frame(const Frame &frame) {
 
 bool Giflib_Encoder::finalize() {
   if (!_initialized) {
-    _last_error = "Tried to finalize uninitilized image";
+    _last_error = "Tried to finalize uninitialized image";
     return false;
   }
 
