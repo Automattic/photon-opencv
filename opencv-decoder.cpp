@@ -25,7 +25,13 @@ void OpenCV_Decoder::reset() {
    * filesystem so that imread can be used.
   */
   TempFile temp_image_file(*_data);
-  _frame = cv::imread(temp_image_file.get_path(), cv::IMREAD_UNCHANGED);
+  int decode_flags = cv::IMREAD_UNCHANGED;
+  size_t num_frames = cv::imcount(temp_image_file.get_path(), decode_flags);
+  if (num_frames != 1) {
+    _ok = false;
+    return;
+  }
+  _frame = cv::imread(temp_image_file.get_path(), decode_flags);
   _ok = !_frame.empty();
 }
 
