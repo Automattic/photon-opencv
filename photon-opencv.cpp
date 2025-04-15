@@ -37,6 +37,12 @@
   } \
 }
 
+#define EXPAND_AMBIGUOUS_EXIF_TAG(x) \
+  "Exif.Image." x, \
+  "Exif.Photo." x, \
+  "Xmp.exif." x, \
+  "Xmp.tiff." x
+
 class Photon_OpenCV : public Php::Base {
 protected:
   Frame _frame;
@@ -51,6 +57,9 @@ protected:
   int _header_channels;
   bool _force_reencode;
   Exiv2::Value::UniquePtr _original_orientation;
+  Exiv2::ExifData _original_exif;
+  Exiv2::IptcData _original_iptc;
+  Exiv2::XmpData _original_xmp;
   std::map<std::string, std::string> _image_options;
   std::vector<std::function<void()>> _operations;
   std::unique_ptr<Decoder> _decoder;
@@ -412,7 +421,7 @@ protected:
     return true;
   }
 
-  bool _loadimagefromrawdata() {
+  bool _loadimagefromrawdata(bool keep_original_metadata) {
     /* Clear image in case object is being reused */
     _frame.img = cv::Mat();
     _decoder.reset(nullptr);
@@ -500,6 +509,12 @@ protected:
 
       if (orientation_pos != exif.end()) {
         _original_orientation = orientation_pos->getValue();
+      }
+
+      if (keep_original_metadata) {
+        _original_exif = exif;
+        _original_iptc = exiv_img->iptcData();
+        _original_xmp = exiv_img->xmpData();
       }
     }
 
@@ -859,10 +874,15 @@ protected:
       return false;
     }
 
-    /* Manually reinsert orientation exif data if it has meaning */
     int exif_orientation = _original_orientation.get()?
       _original_orientation.get()->toUint32() : 0;
-    if (exif_orientation > 1 && exif_orientation <= 8) {
+    bool has_meaningful_orientation =
+      exif_orientation > 1 && exif_orientation <= 8;
+    bool has_meaningful_original_metadata = !_original_exif.empty()
+      || !_original_iptc.empty()
+      || !_original_xmp.empty();
+
+    if (has_meaningful_orientation || has_meaningful_original_metadata) {
       Exiv2::Image::UniquePtr exiv_img;
       try {
         exiv_img = Exiv2::ImageFactory::open(output_buffer.data(),
@@ -874,9 +894,24 @@ protected:
         return false;
       }
 
-      auto &exif = exiv_img->exifData();
-      Exiv2::ExifKey orientation_key("Exif.Image.Orientation");
-      exif.add(orientation_key, _original_orientation.get());
+      if (has_meaningful_original_metadata) {
+        _filter_out_intrinsic_original_metadata();
+        if (!_original_exif.empty()) {
+          exiv_img->setExifData(_original_exif);
+        }
+        if (!_original_iptc.empty()) {
+          exiv_img->setIptcData(_original_iptc);
+        }
+        if (!_original_xmp.empty()) {
+          exiv_img->setXmpData(_original_xmp);
+        }
+      }
+      else {
+        auto &exif = exiv_img->exifData();
+        Exiv2::ExifKey orientation_key("Exif.Image.Orientation");
+        exif.add(orientation_key, _original_orientation.get());
+      }
+
       try {
         exiv_img->writeMetadata();
         output_buffer.resize(exiv_img->io().size());
@@ -1041,6 +1076,44 @@ protected:
     return _force_reencode || _operations.size();
   }
 
+  void _filter_out_intrinsic_original_metadata() {
+    static const std::set<std::string> intrinsic_tags = {
+      EXPAND_AMBIGUOUS_EXIF_TAG("ImageWidth"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("ImageLength"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("BitsPerSample"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("Compression"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("SamplesPerPixel"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("XResolution"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("YResolution"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("ResolutionUnit"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("ColorSpace"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("PixelXDimension"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("PixelYDimension"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("NativeDigest"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("PhotometricInterpretation"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("Thresholding"),
+      EXPAND_AMBIGUOUS_EXIF_TAG("FillOrder"),
+    };
+    for (auto it = _original_exif.begin(); it != _original_exif.end();) {
+      if (!it->key().rfind("Exif.Thumbnail.", 0)
+          || intrinsic_tags.find(it->key()) != intrinsic_tags.end()) {
+        it = _original_exif.erase(it);
+      }
+      else {
+        it++;
+      }
+    }
+
+    for (auto it = _original_xmp.begin(); it != _original_xmp.end();) {
+      if (intrinsic_tags.find(it->key()) != intrinsic_tags.end()) {
+        it = _original_xmp.erase(it);
+      }
+      else {
+        it++;
+      }
+    }
+  }
+
 public:
   /* Gmagick constant replacements */
   static const int CHANNEL_OPACITY = 7;
@@ -1083,7 +1156,11 @@ public:
       throw Php::Exception("Zero size image string passed");
     }
 
-    if (!_loadimagefromrawdata()) {
+    bool keep_original_metadata = false;
+    if (params.size() >= 2) {
+      keep_original_metadata = params[1].boolValue();
+    }
+    if (!_loadimagefromrawdata(keep_original_metadata)) {
       throw Php::Exception("Unable to read image blob: " + _last_error);
     }
   }
@@ -1102,7 +1179,11 @@ public:
       _raw_image_data.resize(0);
     }
 
-    if (!_loadimagefromrawdata()) {
+    bool keep_original_metadata = false;
+    if (params.size() >= 2) {
+      keep_original_metadata = params[1].boolValue();
+    }
+    if (!_loadimagefromrawdata(keep_original_metadata)) {
       throw Php::Exception("Unable to read image: " + _last_error);
     }
   }
@@ -1307,6 +1388,7 @@ public:
         _force_reencode = true;
       }
       _original_orientation.release();
+      _original_exif.clear();
     }
     else if ("icc" == name) {
       if (params[1].isNull()) {
@@ -1321,6 +1403,18 @@ public:
         _icc_profile.resize(new_icc.size());
         memcpy(_icc_profile.data(), new_icc.data(), _icc_profile.size());
       }
+    }
+    else if ("iptc" == name) {
+      if (!params[1].isNull()) {
+        throw Php::Exception("Iptc replacement unimplemented, only removal");
+      }
+      _original_iptc.clear();
+    }
+    else if ("xmp" == name) {
+      if (!params[1].isNull()) {
+        throw Php::Exception("Xmp replacement unimplemented, only removal");
+      }
+      _original_xmp.clear();
     }
     else {
       throw Php::Exception("Tried to modify unsupported profile");
@@ -1555,9 +1649,11 @@ extern "C" {
 
     photon_opencv.method<&Photon_OpenCV::readimageblob>("readimageblob", {
       Php::ByRef("raw_image_data", Php::Type::String),
+      Php::ByVal("keep_original_metadata", Php::Type::Bool, false),
     });
     photon_opencv.method<&Photon_OpenCV::readimage>("readimage", {
       Php::ByVal("filepath", Php::Type::String),
+      Php::ByVal("keep_original_metadata", Php::Type::Bool, false),
     });
     photon_opencv.method<&Photon_OpenCV::writeimage>("writeimage", {
       Php::ByVal("output", Php::Type::String),
