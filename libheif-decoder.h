@@ -4,7 +4,7 @@ protected:
   cv::Mat _frame;
   bool _ok;
   std::vector<uint8_t> _icc_profile;
-  
+
 public:
   Libheif_Decoder(const std::string *data);
   bool loaded();

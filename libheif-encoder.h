@@ -7,7 +7,7 @@ protected:
   static const heif_encoder_descriptor *_aom_descriptor;
 
   static void _initialize();
-  
+
 public:
   Libheif_Encoder(const std::string &format,
       int quality,

@@ -3,7 +3,7 @@ protected:
   const std::string *_data;
   cv::Mat _frame;
   bool _ok;
-  
+
 public:
   OpenCV_Decoder(const std::string *data);
   bool loaded();

@@ -8,16 +8,16 @@
 #include "libheif-encoder.h"
 
 void Libheif_Encoder::_initialize() {
- std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
-   heif_context_alloc(), &heif_context_free);
+  std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
+    heif_context_alloc(), &heif_context_free);
 
- if (!heif_context_get_encoder_descriptors(context.get(),
-     heif_compression_AV1,
-     "aom",
-     &_aom_descriptor,
-     1)) {
-   throw std::runtime_error("AOM encoder for AVIF images not available");
- }
+  if (!heif_context_get_encoder_descriptors(context.get(),
+      heif_compression_AV1,
+      "aom",
+      &_aom_descriptor,
+      1)) {
+    throw std::runtime_error("AOM encoder for AVIF images not available");
+  }
 }
 
 
