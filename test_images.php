@@ -1,11 +1,9 @@
 <?php
-// Enable dynamic loading for this script only
-ini_set('enable_dl', '1');
 
 // Load the photon-opencv extension
 if (!extension_loaded('photon-opencv')) {
     // Try to load the extension from the current directory
-    if (!dl('/home/dinika/code/work/photon-opencv/photon-opencv.so')) {
+    if (!dl('photon-opencv')) {
         die("Error: Could not load photon-opencv extension. Make sure it's compiled and available.\n");
     }
 }
@@ -15,6 +13,7 @@ echo "=====================================\n\n";
 
 $imageFiles = [
     'images_to_examine/photon.png',
+    'images_to_examine/welcome-peach.png',
     'images_to_examine/photon.webp'
 ];
 

@@ -660,37 +660,106 @@ protected:
   }
 
   int _getchannelsfromrawpng() {
+    std::cerr << "[DEBUG] _getchannelsfromrawpng: Starting PNG channel analysis" << std::endl;
+    
     const uint8_t expected_first_bytes[] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a,
         0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52};
     const uint8_t *data = (uint8_t *) _raw_image_data.data();
     const uint8_t *end = data + _raw_image_data.size();
 
+    std::cerr << "[DEBUG] _getchannelsfromrawpng: Data size: " << _raw_image_data.size() << " bytes" << std::endl;
+
     // Assumes PNG was already validated, minimal confidence checks
     if (_raw_image_data.size() < 32
         || memcmp(expected_first_bytes, data, sizeof(expected_first_bytes))) {
       // Unexpected default to 3, the most common case
+      std::cerr << "[DEBUG] _getchannelsfromrawpng: PNG validation failed - size too small or invalid header" << std::endl;
+      std::cerr << "[DEBUG] _getchannelsfromrawpng: Returning 3 channels (default)" << std::endl;
       return 3;
     }
+
+    std::cerr << "[DEBUG] _getchannelsfromrawpng: PNG header validation passed" << std::endl;
 
     // Palettes will be automatically converted to RGB
     uint8_t color_type = data[sizeof(expected_first_bytes)+9];
     bool rgb = color_type & 2;
-    if (color_type & 4) {
-      return rgb? 4 : 2;
-    }
-
-    for (const uint8_t *chunk = data + 8; chunk + 8 <= end; ) {
-      if (!strncmp("tRNS", (char *) chunk+4, 4)) {
-        return rgb? 4 : 2;
+    bool format_supports_alpha = color_type & 4;
+    
+    std::cerr << "[DEBUG] _getchannelsfromrawpng: Color type: " << (int)color_type << std::endl;
+    std::cerr << "[DEBUG] _getchannelsfromrawpng: RGB bit (bit 2): " << (rgb ? "true" : "false") << std::endl;
+    std::cerr << "[DEBUG] _getchannelsfromrawpng: Format supports alpha (bit 4): " << (format_supports_alpha ? "true" : "false") << std::endl;
+    
+    // If format doesn't support alpha, check for tRNS chunk for palette transparency
+    if (!format_supports_alpha) {
+      std::cerr << "[DEBUG] _getchannelsfromrawpng: Format doesn't support alpha, checking for tRNS chunk" << std::endl;
+      
+      for (const uint8_t *chunk = data + 8; chunk + 8 <= end; ) {
+        std::cerr << "[DEBUG] _getchannelsfromrawpng: Checking chunk: " << std::string((char*)chunk+4, 4) << std::endl;
+        
+        if (!strncmp("tRNS", (char *) chunk+4, 4)) {
+          int channels = rgb? 4 : 2;
+          std::cerr << "[DEBUG] _getchannelsfromrawpng: tRNS chunk found, returning " << channels << " channels" << std::endl;
+          return channels;
+        }
+        uint32_t chunk_size = (chunk[0] << 24)
+          | (chunk[1] << 16)
+          | (chunk[2] << 8)
+          | chunk[3];
+        std::cerr << "[DEBUG] _getchannelsfromrawpng: Chunk size: " << chunk_size << ", moving to next chunk" << std::endl;
+        chunk += chunk_size+12;
       }
-      uint32_t chunk_size = (chunk[0] << 24)
-        | (chunk[1] << 16)
-        | (chunk[2] << 8)
-        | chunk[3];
-      chunk += chunk_size+12;
+
+      int channels = rgb? 3 : 1;
+      std::cerr << "[DEBUG] _getchannelsfromrawpng: No tRNS chunk found, returning " << channels << " channels" << std::endl;
+      return channels;
     }
 
-    return rgb? 3 : 1;
+    // Format supports alpha (RGBA), now check if image actually has transparent pixels
+    std::cerr << "[DEBUG] _getchannelsfromrawpng: Format supports alpha, checking for actual transparency" << std::endl;
+    
+    try {
+      // Decode the PNG to check for actual transparency
+      std::vector<uchar> buffer(_raw_image_data.begin(), _raw_image_data.end());
+      cv::Mat img = cv::imdecode(buffer, cv::IMREAD_UNCHANGED);
+      
+      if (img.empty()) {
+        std::cerr << "[DEBUG] _getchannelsfromrawpng: Failed to decode PNG, assuming no transparency" << std::endl;
+        return rgb ? 3 : 1;
+      }
+      
+      std::cerr << "[DEBUG] _getchannelsfromrawpng: Decoded image - channels: " << img.channels() << ", type: " << img.type() << std::endl;
+      
+      // If it's RGBA, check if any alpha values are less than 255
+      if (img.channels() == 4) {
+        cv::Mat alpha_channel;
+        cv::extractChannel(img, alpha_channel, 3); // Extract alpha channel
+        
+        double min_val, max_val;
+        cv::minMaxLoc(alpha_channel, &min_val, &max_val);
+        
+        std::cerr << "[DEBUG] _getchannelsfromrawpng: Alpha channel range: " << min_val << " to " << max_val << std::endl;
+        
+        // If all alpha values are 255 (fully opaque), treat as RGB
+        if (min_val >= 255.0) {
+          std::cerr << "[DEBUG] _getchannelsfromrawpng: All pixels fully opaque, returning 3 channels (RGB)" << std::endl;
+          return 3;
+        } else {
+          std::cerr << "[DEBUG] _getchannelsfromrawpng: Found transparent pixels, returning 4 channels (RGBA)" << std::endl;
+          return 4;
+        }
+      } else {
+        // Not RGBA format, return based on actual channels
+        int channels = img.channels();
+        std::cerr << "[DEBUG] _getchannelsfromrawpng: Image has " << channels << " channels" << std::endl;
+        return channels;
+      }
+    } catch (const std::exception& e) {
+      std::cerr << "[DEBUG] _getchannelsfromrawpng: Exception during decode: " << e.what() << std::endl;
+      // Fallback to format-based detection
+      int channels = rgb ? 4 : 2;
+      std::cerr << "[DEBUG] _getchannelsfromrawpng: Fallback to format-based detection, returning " << channels << " channels" << std::endl;
+      return channels;
+    }
   }
 
   int _getchannelsfromrawavif() {
