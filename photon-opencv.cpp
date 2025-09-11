@@ -675,44 +675,84 @@ protected:
     // Palettes will be automatically converted to RGB
     uint8_t color_type = data[sizeof(expected_first_bytes)+9];
     bool rgb = color_type & 2;
-    bool format_supports_alpha = color_type & 4;
-    
-    // If format doesn't support alpha, check for tRNS chunk for palette transparency
-    if (!format_supports_alpha) {
-      for (const uint8_t *chunk = data + 8; chunk + 8 <= end; ) {
-        if (!strncmp("tRNS", (char *) chunk+4, 4)) {
-          return rgb? 4 : 2;
-        }
-        uint32_t chunk_size = (chunk[0] << 24)
-          | (chunk[1] << 16)
-          | (chunk[2] << 8)
-          | chunk[3];
-        chunk += chunk_size+12;
-      }
-      return rgb? 3 : 1;
+    if (color_type & 4) {
+      return rgb? 4 : 2;
     }
 
-    // Format supports alpha (RGBA), now check if image actually has transparent pixels
+    for (const uint8_t *chunk = data + 8; chunk + 8 <= end; ) {
+      if (!strncmp("tRNS", (char *) chunk+4, 4)) {
+        return rgb? 4 : 2;
+      }
+      uint32_t chunk_size = (chunk[0] << 24)
+        | (chunk[1] << 16)
+        | (chunk[2] << 8)
+        | chunk[3];
+      chunk += chunk_size+12;
+    }
+
+    return rgb? 3 : 1;
+  }
+
+  bool _ispngtransparent() {
+    if (_raw_image_data.empty() || _format != "png") {
+      return false;
+    }
+    
+    const uint8_t *data = (uint8_t *) _raw_image_data.data();
+    const uint8_t *end = data + _raw_image_data.size();
+    
+    // If tRNS chunk is present assume transparency
+    for (const uint8_t *chunk = data + 8; chunk + 8 <= end; ) {      
+      if (!strncmp("tRNS", (char *) chunk+4, 4)) {
+        return true;
+      }
+      uint32_t chunk_size = (chunk[0] << 24)
+        | (chunk[1] << 16)
+        | (chunk[2] << 8)
+        | chunk[3];
+      chunk += chunk_size+12;
+    }
+        
+    bool format_supports_alpha = (_type == IMGTYPE_TRUECOLORMATTE || _type == IMGTYPE_GRAYSCALEMATTE);    
+    
+    if (!format_supports_alpha) {
+      return false;
+    }
+
+    // If image has alpha channel and there is atleast 1 non-opaque value (ie. != 255) in the channel, image is transparent 
     try {
-      // Decode the PNG to check for actual transparency
       std::vector<uchar> buffer(_raw_image_data.begin(), _raw_image_data.end());
       cv::Mat img = cv::imdecode(buffer, cv::IMREAD_UNCHANGED);
-      
-      if (img.empty() || img.channels() != 4) {
-        return rgb ? 3 : 1;
+            
+      if (img.empty()) {
+        return false;
       }
       
-      // Extract alpha channel and check for transparency
       cv::Mat alpha_channel;
-      cv::extractChannel(img, alpha_channel, 3);
+      if (_type == IMGTYPE_TRUECOLORMATTE) {
+        if (img.channels() != 4) {
+          return false;
+        }
+
+        cv::extractChannel(img, alpha_channel, 3);
+      } else if (_type == IMGTYPE_GRAYSCALEMATTE) {
+        if (img.channels() != 2) {
+          return false;
+        }
+        
+        cv::extractChannel(img, alpha_channel, 1);
+      }
       
-      // Check if any pixels have alpha < 255 (transparent)
-      bool has_transparency = cv::countNonZero(alpha_channel < 255) > 0;
+      double min_val, max_val;
+      cv::minMaxLoc(alpha_channel, &min_val, &max_val);
       
-      return has_transparency ? 4 : 3;
+      int transparent_pixels = cv::countNonZero(alpha_channel < 255);
+      
+      bool has_transparency = transparent_pixels > 0;
+      
+      return has_transparency;
     } catch (const std::exception& e) {
-      // Fallback to format-based detection
-      return rgb ? 4 : 2;
+      return format_supports_alpha;
     }
   }
 
@@ -1449,6 +1489,11 @@ public:
     return _type;
   }
 
+  Php::Value ispngtransparent() {
+    _checkimageloaded();
+    return _ispngtransparent();
+  }
+
   void setimagetype(Php::Parameters &params) {
     // Unimplemented
     (void) params;
@@ -1720,6 +1765,7 @@ extern "C" {
     });
 
     photon_opencv.method<&Photon_OpenCV::getimagetype>("getimagetype");
+    photon_opencv.method<&Photon_OpenCV::ispngtransparent>("ispngtransparent");
     photon_opencv.method<&Photon_OpenCV::setimagetype>("setimagetype", {
       Php::ByVal("type", Php::Type::Numeric)
     });
