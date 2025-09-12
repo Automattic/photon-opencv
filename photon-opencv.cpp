@@ -693,15 +693,25 @@ protected:
     return rgb? 3 : 1;
   }
 
+  /** Checks if image actually uses transparent colors based on _type:
+   *  1. `_type` does not support alpha channel - Returns false
+   *  2. image has tRNS chunk - assumes image is transparent and returns true
+   *  3. image has alpha channel - extracts the alpha channel and checks if it contains any transparent color. If yes, returns true.
+   */
   bool _ispngtransparent() {
     if (_raw_image_data.empty() || _format != "png") {
       return false;
     }
-    
+
+    bool format_supports_alpha = (_type == IMGTYPE_TRUECOLORMATTE || _type == IMGTYPE_GRAYSCALEMATTE);    
+    if (!format_supports_alpha) {
+      return false;
+    }
+
     const uint8_t *data = (uint8_t *) _raw_image_data.data();
     const uint8_t *end = data + _raw_image_data.size();
     
-    // If tRNS chunk is present assume transparency
+    // If tRNS chunk is present, assume transparency
     for (const uint8_t *chunk = data + 8; chunk + 8 <= end; ) {      
       if (!strncmp("tRNS", (char *) chunk+4, 4)) {
         return true;
@@ -711,12 +721,6 @@ protected:
         | (chunk[2] << 8)
         | chunk[3];
       chunk += chunk_size+12;
-    }
-        
-    bool format_supports_alpha = (_type == IMGTYPE_TRUECOLORMATTE || _type == IMGTYPE_GRAYSCALEMATTE);    
-    
-    if (!format_supports_alpha) {
-      return false;
     }
 
     // If image has alpha channel and there is atleast 1 non-opaque value (ie. != 255) in the channel, image is transparent 
@@ -748,9 +752,7 @@ protected:
       
       int transparent_pixels = cv::countNonZero(alpha_channel < 255);
       
-      bool has_transparency = transparent_pixels > 0;
-      
-      return has_transparency;
+      return transparent_pixels > 0;
     } catch (const std::exception& e) {
       return format_supports_alpha;
     }
