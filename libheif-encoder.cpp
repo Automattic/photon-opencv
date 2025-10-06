@@ -87,11 +87,8 @@ bool Libheif_Encoder::add_frame(const Frame &frame) {
   if (lossless_option != _options->end()
       && "true" == lossless_option->second) {
     heif_encoder_set_lossless(encoder.get(), 1);
-    heif_encoder_set_parameter(encoder.get(), "chroma", "444");
 
     nclx.reset(heif_nclx_color_profile_alloc());
-    // Only set version 1 fields
-    nclx->matrix_coefficients = heif_matrix_coefficients_RGB_GBR;
     nclx->transfer_characteristics =
       heif_transfer_characteristic_unspecified;
     nclx->color_primaries = heif_color_primaries_unspecified;
