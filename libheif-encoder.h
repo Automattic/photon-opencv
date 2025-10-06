@@ -4,7 +4,7 @@ protected:
   std::string _format;
   int _quality;
   std::vector<uint8_t> *_output;
-  static const heif_encoder_descriptor *_aom_descriptor;
+  static const heif_encoder_descriptor *_svt_descriptor;
 
   static void _initialize();
   

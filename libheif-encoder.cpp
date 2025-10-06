@@ -13,8 +13,8 @@ void Libheif_Encoder::_initialize() {
 
  if (!heif_context_get_encoder_descriptors(context.get(),
      heif_compression_AV1,
-     "aom",
-     &_aom_descriptor,
+     "svt",
+     &_svt_descriptor,
      1)) {
    throw std::runtime_error("AOM encoder for AVIF images not available");
  }
@@ -62,7 +62,7 @@ bool Libheif_Encoder::add_frame(const Frame &frame) {
   // Force pick AOM for AVIF images, as it supports lossless encoding
   if (heif_compression_AV1 == heif_format) {
     error = heif_context_get_encoder(context.get(),
-        _aom_descriptor,
+        _svt_descriptor,
         &raw_encoder);
   }
   else {
@@ -210,4 +210,4 @@ bool Libheif_Encoder::finalize() {
   return true;
 }
 
-const heif_encoder_descriptor *Libheif_Encoder::_aom_descriptor = nullptr;
+const heif_encoder_descriptor *Libheif_Encoder::_svt_descriptor = nullptr;
