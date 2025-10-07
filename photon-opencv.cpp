@@ -63,6 +63,7 @@ protected:
   std::map<std::string, std::string> _image_options;
   std::vector<std::function<void()>> _operations;
   std::unique_ptr<Decoder> _decoder;
+  int _thread_count;
   bool _preserve_palette;
   bool _first_encode;
 
@@ -805,7 +806,8 @@ protected:
             _format,
             quality,
             &_image_options,
-            &output_buffer));
+            &output_buffer,
+            _thread_count));
     }
     else if ("webp" == _format && _decoder->provides_animation()) {
       encoder.reset(new LibWebP_Full_Frame_Encoder(
@@ -1143,7 +1145,8 @@ public:
   static const int ORIENTATION_LEFTBOTTOM = 8;
 
   Photon_OpenCV() {
-    cv::setNumThreads(Php::ini_get("photon.opencv_threads"));
+    _thread_count = Php::ini_get("photon.opencv_threads");
+    cv::setNumThreads(_thread_count);
 
     /* Static local intilization is thread safe */
     static std::once_flag initialized;

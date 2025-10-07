@@ -24,7 +24,8 @@ void Libheif_Encoder::_initialize() {
 Libheif_Encoder::Libheif_Encoder(const std::string &format,
     int quality,
     const std::map<std::string, std::string> *options,
-    std::vector<uint8_t> *output) {
+    std::vector<uint8_t> *output,
+    int thread_count) {
   /* Static local intilization is thread safe */
   static std::once_flag initialized;
   std::call_once(initialized, _initialize);
@@ -33,6 +34,7 @@ Libheif_Encoder::Libheif_Encoder(const std::string &format,
   _quality = quality;
   _format = format;
   _output = output;
+  _thread_count = thread_count;
 
   _output->clear();
 }
@@ -82,6 +84,9 @@ bool Libheif_Encoder::add_frame(const Frame &frame) {
   std::unique_ptr<heif_color_profile_nclx,
     decltype(&heif_nclx_color_profile_free)>
     nclx(nullptr, &heif_nclx_color_profile_free);
+
+  // `threads` set LevelOfParallelism param of SVT (https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/master/Docs/Parameters.md#1-thread-management-parameters)
+  heif_encoder_set_parameter(encoder.get(), "threads", std::to_string(_thread_count).c_str());
 
   auto lossless_option = _options->find(_format + ":lossless");
   if (lossless_option != _options->end()
