@@ -165,7 +165,8 @@ bool Libheif_Encoder::add_frame(const Frame &frame) {
       options.get(),
       nullptr);
   if (error.code != heif_error_Ok) {
-    _last_error = "Failed to encode image";
+    _last_error = "Failed to encode image: ";
+    _last_error += error.message;
     return false;
   }
 
