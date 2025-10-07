@@ -9,7 +9,7 @@
 #include "libheif-encoder.h"
 
 void Libheif_Encoder::_initialize() {
-  setenv("SVT_LOG", "1", 1); // Errors only
+  // setenv("SVT_LOG", "1", 1); // Errors only
   
  std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
    heif_context_alloc(), &heif_context_free);
@@ -88,7 +88,6 @@ bool Libheif_Encoder::add_frame(const Frame &frame) {
     decltype(&heif_nclx_color_profile_free)>
     nclx(nullptr, &heif_nclx_color_profile_free);
 
-  // `threads` actually sets LevelOfParallelism param of SVT (https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/master/Docs/Parameters.md#1-thread-management-parameters)
   heif_encoder_set_parameter(encoder.get(), "threads", std::to_string(_thread_count).c_str());
 
   auto lossless_option = _options->find(_format + ":lossless");
