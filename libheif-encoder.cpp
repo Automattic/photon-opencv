@@ -1,16 +1,12 @@
 #include <opencv2/opencv.hpp>
 #include <gif_lib.h>
 #include <libheif/heif.h>
-#include <cstdlib>
-
 #include "gif-palette.h"
 #include "frame.h"
 #include "encoder.h"
 #include "libheif-encoder.h"
 
-void Libheif_Encoder::_initialize() {
-  // setenv("SVT_LOG", "1", 1); // Errors only
-  
+void Libheif_Encoder::_initialize() {  
  std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
    heif_context_alloc(), &heif_context_free);
 
