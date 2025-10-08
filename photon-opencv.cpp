@@ -1751,7 +1751,7 @@ extern "C" {
     extension.add(Php::Ini("photon.opencv_threads", 2));
     // Controls degree of parallelism. Range [0-6] (https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/v3.0.0/Docs/Parameters.md#1-thread-management-parameters)
     extension.add(Php::Ini("photon.svt_level_of_parallelism", 2));
-    // Log level 1 -> errors (https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/v3.0.0/Source/Lib/Codec/svt_log.h#L18)
+    // Log level 1 is errors + fatals (https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/v3.0.0/Source/Lib/Codec/svt_log.h#L18)
     extension.add(Php::Ini("photon.svt_log_level", 1)); 
 
     return extension;

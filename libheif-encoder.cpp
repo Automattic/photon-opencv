@@ -6,7 +6,7 @@
 #include "encoder.h"
 #include "libheif-encoder.h"
 
-void Libheif_Encoder::_initialize() {  
+void Libheif_Encoder::_initialize() {
  std::unique_ptr<heif_context, decltype(&heif_context_free)> context(
    heif_context_alloc(), &heif_context_free);
 
@@ -60,7 +60,7 @@ bool Libheif_Encoder::add_frame(const Frame &frame) {
     &heif_encoder_release);
   heif_encoder *raw_encoder;
 
-  // Force pick AOM for AVIF images, as it supports lossless encoding
+  // Force pick SVT for AVIF images
   if (heif_compression_AV1 == heif_format) {
     error = heif_context_get_encoder(context.get(),
         _svt_descriptor,
@@ -84,13 +84,18 @@ bool Libheif_Encoder::add_frame(const Frame &frame) {
     decltype(&heif_nclx_color_profile_free)>
     nclx(nullptr, &heif_nclx_color_profile_free);
 
+  // Setting "threads" on libheif configures LevelOfParallelism in SVT
   heif_encoder_set_parameter(encoder.get(), "threads", std::to_string(_thread_count).c_str());
 
   auto lossless_option = _options->find(_format + ":lossless");
   if (lossless_option != _options->end()
       && "true" == lossless_option->second) {
     heif_encoder_set_lossless(encoder.get(), 1);
-
+    
+    // SVT currently does not support 444 chroma subsampling - https://gitlab.com/AOMediaCodec/SVT-AV1/-/issues/2211
+    // heif_encoder_set_parameter(encoder.get(), "chroma", "444");
+    // nclx->matrix_coefficients = heif_matrix_coefficients_RGB_GBR;
+    
     nclx.reset(heif_nclx_color_profile_alloc());
     nclx->transfer_characteristics =
       heif_transfer_characteristic_unspecified;
