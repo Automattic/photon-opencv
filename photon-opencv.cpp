@@ -1,6 +1,7 @@
 #include <phpcpp.h>
 #include <string>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <fstream>
 #include <map>
@@ -805,7 +806,8 @@ protected:
             _format,
             quality,
             &_image_options,
-            &output_buffer));
+            &output_buffer,
+            Php::ini_get("photon.svt_level_of_parallelism")));
     }
     else if ("webp" == _format && _decoder->provides_animation()) {
       encoder.reset(new LibWebP_Full_Frame_Encoder(
@@ -1144,6 +1146,8 @@ public:
 
   Photon_OpenCV() {
     cv::setNumThreads(Php::ini_get("photon.opencv_threads"));
+    int svt_log_level = Php::ini_get("photon.svt_log_level");
+    setenv("SVT_LOG", std::to_string(svt_log_level).c_str(), 1);
 
     /* Static local intilization is thread safe */
     static std::once_flag initialized;
@@ -1745,6 +1749,10 @@ extern "C" {
 
     // Default to 2 if not set
     extension.add(Php::Ini("photon.opencv_threads", 2));
+    // Controls degree of parallelism. Range [0-6] (https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/v3.0.0/Docs/Parameters.md#1-thread-management-parameters)
+    extension.add(Php::Ini("photon.svt_level_of_parallelism", 2));
+    // Log level 1 is errors + fatals (https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/v3.0.0/Source/Lib/Codec/svt_log.h#L18)
+    extension.add(Php::Ini("photon.svt_log_level", 1)); 
 
     return extension;
   }
