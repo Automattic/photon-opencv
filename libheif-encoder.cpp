@@ -15,7 +15,7 @@ void Libheif_Encoder::_initialize() {
      "svt",
      &_svt_descriptor,
      1)) {
-   throw std::runtime_error("AOM encoder for AVIF images not available");
+   throw std::runtime_error("SVT encoder for AVIF images not available");
  }
 }
 
