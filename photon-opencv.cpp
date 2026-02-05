@@ -387,7 +387,7 @@ protected:
       _decoder.reset(new LibWebP_Decoder(&_raw_image_data));
     }
     if (!_decoder->loaded()) {
-      _decoder.reset(new Libheif_Decoder(&_raw_image_data));
+      _decoder.reset(new Libheif_Decoder(&_raw_image_data, Php::ini_get("photon.libheif_decoder_threads")));
     }
 
     if (!_decoder->loaded()) {
@@ -1753,7 +1753,8 @@ extern "C" {
     extension.add(Php::Ini("photon.svt_level_of_parallelism", 2));
     // Log level 1 is errors + fatals (https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/v3.0.0/Source/Lib/Codec/svt_log.h#L18)
     extension.add(Php::Ini("photon.svt_log_level", 1)); 
-
+    // Controls degree of parallelism for libheif decoder. Range [0-cpu_count]. 0 means use all available threads.
+    extension.add(Php::Ini("photon.libheif_decoder_threads", 1));
     return extension;
   }
 }
