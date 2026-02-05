@@ -24,6 +24,8 @@ void Libheif_Decoder::reset() {
     heif_context_alloc(), &heif_context_free);
 
   heif_error error;
+  
+  heif_context_set_max_decoding_threads(context.get(), 1);
 
   error = heif_context_read_from_memory_without_copy(context.get(),
     (void *) _data->data(),
@@ -45,6 +47,11 @@ void Libheif_Decoder::reset() {
   }
 
   bool has_alpha = heif_image_handle_has_alpha_channel(handle.get());
+  
+  std::unique_ptr<heif_decoding_options, decltype(&heif_decoding_options_free)>
+  decode_options(heif_decoding_options_alloc(), &heif_decoding_options_free);
+  decode_options->num_codec_threads = 1;
+  decode_options->num_library_threads = 1;
 
   std::unique_ptr<heif_image, decltype(&heif_image_release)>
     h_image(nullptr, &heif_image_release);
@@ -53,7 +60,7 @@ void Libheif_Decoder::reset() {
     &raw_h_image,
     heif_colorspace_RGB,
     has_alpha? heif_chroma_interleaved_RGBA : heif_chroma_interleaved_RGB,
-    nullptr);
+    decode_options.get());
   h_image.reset(raw_h_image);
   if (error.code) {
     return;
