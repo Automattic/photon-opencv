@@ -684,10 +684,10 @@ protected:
       if (!strncmp("tRNS", (char *) chunk+4, 4)) {
         return rgb? 4 : 2;
       }
-      uint32_t chunk_size = (chunk[0] << 24)
-        | (chunk[1] << 16)
-        | (chunk[2] << 8)
-        | chunk[3];
+      uint64_t chunk_size = ((uint64_t) chunk[0] << 24)
+        | ((uint64_t) chunk[1] << 16)
+        | ((uint64_t) chunk[2] << 8)
+        | (uint64_t) chunk[3];
       chunk += chunk_size+12;
     }
 
@@ -756,10 +756,10 @@ protected:
       if (!strncmp("VP8L", (char *) chunk, 4)) {
         return true;
       }
-      uint32_t chunk_size = chunk[4]
-        | (chunk[5]<<8)
-        | (chunk[6]<<16)
-        | (chunk[7]<<24);
+      uint64_t chunk_size = (uint64_t) chunk[4]
+        | ((uint64_t) chunk[5]<<8)
+        | ((uint64_t) chunk[6]<<16)
+        | ((uint64_t) chunk[7]<<24);
       chunk += chunk_size + 8;
     }
 
