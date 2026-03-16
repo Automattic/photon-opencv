@@ -1,4 +1,4 @@
-PHP_CONFIG=php-config
+PHP_CONFIG=php-config82
 PKGC_LIBS=libheif opencv4 exiv2 lcms2 libwebpdemux libwebpmux
 CXXFLAGS=-Wall -Wextra -O3 -std=c++17 -fpic -isystem vendor \
 		`pkg-config --cflags $(PKGC_LIBS) \

@@ -158,7 +158,8 @@ bool Giflib_Decoder::get_next_frame(Frame &dst) {
           // Silently ignore failed reads
           DGifGetLine(_gif.get(), line.data(), desc.Width);
           for (int x = 0; x < desc.Width; x++) {
-            if (line[x] == gcb.TransparentColor) {
+            if (line[x] == gcb.TransparentColor
+                || line[x] >= color_map->ColorCount) {
               continue;
             }
 
