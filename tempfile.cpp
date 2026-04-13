@@ -1,6 +1,7 @@
 #include <string>
 #include <unistd.h>
 #include <filesystem>
+#include <phpcpp.h>
 #include "tempfile.h"
 
 TempFile::TempFile(const std::string &data) {
@@ -8,7 +9,19 @@ TempFile::TempFile(const std::string &data) {
     + std::filesystem::path::preferred_separator + "pocvXXXXXX";
 
   int fd = mkstemp(_path.data());
-  write(fd, data.data(), data.size());
+  if (fd == -1) {
+    std::string error = strerror(errno);
+    throw Php::Exception(
+        "Failed to create temporary file " + _path + ": " + error);
+  }
+
+  if (write(fd, data.data(), data.size()) == -1) {
+    close(fd);
+    std::string error = strerror(errno);
+    throw Php::Exception(
+        "Failed to write to temporary file: " + error);
+  }
+
   close(fd);
 }
 
