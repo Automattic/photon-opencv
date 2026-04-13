@@ -30,14 +30,21 @@ void Msfgif_Encoder::_composite(cv::Mat &dst, const cv::Mat &src) {
     for (int j = 0; j < src.cols; j++) {
       cv::Vec4b &d = dst_line[j];
       cv::Vec4b &s = src_line[j];
-      double ad = d[3] / 255.0;
-      double as = s[3] / 255.0;
-      double ar = (s[3] + d[3]*(1-as)) / 255.0;
-      dst_line[j] = cv::Vec4b(
-          round((s[0]*as + d[0]*ad*(1-as))/ar),
-          round((s[1]*as + d[1]*ad*(1-as))/ar),
-          round((s[2]*as + d[2]*ad*(1-as))/ar),
-          round(ar * 255.0));
+
+      if (!d[3] && !s[3]) {
+        dst_line[j] = cv::Vec4b(127, 0, 0, 127);
+      }
+      else {
+        double ad = d[3] / 255.0;
+        double as = s[3] / 255.0;
+        double ar = (s[3] + d[3]*(1-as)) / 255.0;
+
+        dst_line[j] = cv::Vec4b(
+            round((s[0]*as + d[0]*ad*(1-as))/ar),
+            round((s[1]*as + d[1]*ad*(1-as))/ar),
+            round((s[2]*as + d[2]*ad*(1-as))/ar),
+            round(ar * 255.0));
+      }
     }
     dst_line += dst.step / sizeof(cv::Vec4b);
     src_line += src.step / sizeof(cv::Vec4b);
