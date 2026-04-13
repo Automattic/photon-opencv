@@ -228,6 +228,11 @@ protected:
   }
 
   static void _initialize() {
+    cv::setNumThreads(Php::ini_get("photon.opencv_threads"));
+
+    int svt_log_level = Php::ini_get("photon.svt_log_level");
+    setenv("SVT_LOG", std::to_string(svt_log_level).c_str(), 1);
+
     /* Load default sRGB profile */
     _srgb_profile = cmsOpenProfileFromMem(srgb_icc, sizeof(srgb_icc)-1);
     if (!_srgb_profile) {
@@ -1145,10 +1150,6 @@ public:
   static const int ORIENTATION_LEFTBOTTOM = 8;
 
   Photon_OpenCV() {
-    cv::setNumThreads(Php::ini_get("photon.opencv_threads"));
-    int svt_log_level = Php::ini_get("photon.svt_log_level");
-    setenv("SVT_LOG", std::to_string(svt_log_level).c_str(), 1);
-
     /* Static local intilization is thread safe */
     static std::once_flag initialized;
     std::call_once(initialized, _initialize);
@@ -1752,7 +1753,7 @@ extern "C" {
     // Controls degree of parallelism. Range [0-6] (https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/v3.0.0/Docs/Parameters.md#1-thread-management-parameters)
     extension.add(Php::Ini("photon.svt_level_of_parallelism", 2));
     // Log level 1 is errors + fatals (https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/v3.0.0/Source/Lib/Codec/svt_log.h#L18)
-    extension.add(Php::Ini("photon.svt_log_level", 1)); 
+    extension.add(Php::Ini("photon.svt_log_level", 1));
     // Controls degree of parallelism for libheif decoder. Range [0-cpu_count]. 0 means use all available threads.
     extension.add(Php::Ini("photon.libheif_decoder_threads", 1));
     return extension;
