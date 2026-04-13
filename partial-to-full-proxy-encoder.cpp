@@ -93,8 +93,8 @@ bool Partial_To_Full_Proxy_Encoder::add_frame(const Frame &frame) {
   _previous.disposal = frame.disposal;
 
   cv::Mat overlapping_img = frame.img(cv::Rect(
-        overlap_y - frame.y,
         overlap_x - frame.x,
+        overlap_y - frame.y,
         overlap_width,
         overlap_height));
   for (int i = 0; i < overlapping_img.rows; i++) {
