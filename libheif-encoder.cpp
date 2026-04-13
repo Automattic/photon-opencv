@@ -181,12 +181,13 @@ bool Libheif_Encoder::add_frame(const Frame &frame) {
   heif_writer simple_ram_copier;
   simple_ram_copier.writer_api_version = 1;
   simple_ram_copier.write = []
-    (heif_context *ctx, const void *data, size_t size, void *userdata) {
+    (heif_context *ctx, const void *data, size_t chunk_size, void *userdata) {
       (void) ctx;
 
       std::vector<uint8_t> *buffer = (std::vector<uint8_t> *) userdata;
-      buffer->resize(size);
-      std::memcpy(buffer->data(), data, size);
+      size_t original_size = buffer->size();
+      buffer->resize(original_size + chunk_size);
+      std::memcpy(buffer->data() + original_size, data, chunk_size);
 
       heif_error error_ok;
       error_ok.code = heif_error_Ok;
