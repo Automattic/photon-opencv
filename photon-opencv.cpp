@@ -1603,6 +1603,10 @@ public:
   Php::Value blobrequiresreencoding() {
     return _requiresreencoding();
   }
+
+  void forcereencode() {
+    _force_reencode = true;
+  }
 };
 cmsHPROFILE Photon_OpenCV::_srgb_profile = nullptr;
 
@@ -1745,6 +1749,8 @@ extern "C" {
     // Not in Gmagick
     photon_opencv.method<&Photon_OpenCV::blobrequiresreencoding>(
         "blobrequiresreencoding");
+    photon_opencv.method<&Photon_OpenCV::forcereencode>(
+        "forcereencode");
 
     extension.add(std::move(photon_opencv));
 
