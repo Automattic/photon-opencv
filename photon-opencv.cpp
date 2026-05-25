@@ -73,6 +73,8 @@ protected:
   const int PNG_DEFAULT_QUALITY = 21;
 
   static cmsHPROFILE _srgb_profile;
+  inline static int _libheif_decoder_threads = 1;
+  inline static int _svt_level_of_parallelism = 2;
 
   void _enforce8u() {
     if (CV_8U != _frame.img.depth()) {
@@ -233,6 +235,11 @@ protected:
     int svt_log_level = Php::ini_get("photon.svt_log_level");
     setenv("SVT_LOG", std::to_string(svt_log_level).c_str(), 1);
 
+    _svt_level_of_parallelism = Php::ini_get(
+        "photon.svt_level_of_parallelism");
+
+    _libheif_decoder_threads = Php::ini_get("photon.libheif_decoder_threads");
+
     /* Load default sRGB profile */
     _srgb_profile = cmsOpenProfileFromMem(srgb_icc, sizeof(srgb_icc)-1);
     if (!_srgb_profile) {
@@ -392,7 +399,8 @@ protected:
       _decoder.reset(new LibWebP_Decoder(&_raw_image_data));
     }
     if (!_decoder->loaded()) {
-      _decoder.reset(new Libheif_Decoder(&_raw_image_data, Php::ini_get("photon.libheif_decoder_threads")));
+      _decoder.reset(new Libheif_Decoder(&_raw_image_data,
+            _libheif_decoder_threads));
     }
 
     if (!_decoder->loaded()) {
@@ -809,7 +817,7 @@ protected:
             quality,
             &_image_options,
             &output_buffer,
-            Php::ini_get("photon.svt_level_of_parallelism")));
+            _svt_level_of_parallelism));
     }
     else if ("webp" == _format && _decoder->provides_animation()) {
       encoder.reset(new LibWebP_Full_Frame_Encoder(
