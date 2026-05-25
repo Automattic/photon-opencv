@@ -126,7 +126,7 @@ bool Giflib_Encoder::_maybe_insert_frame(bool finalizing) {
   uint8_t *line = _next.data;
   for (int i = 0; i < _next.rows; i++) {
     if (GIF_OK != EGifPutLine(_gif.get(), line, _next.cols)) {
-      _last_error = "Failed to put line" + i;
+      _last_error = "Failed to put line " + std::to_string(i);
       return false;
     }
     line += _next.step / sizeof(uint8_t);

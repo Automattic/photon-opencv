@@ -86,7 +86,7 @@ bool Giflib_Decoder::get_next_frame(Frame &dst) {
         // GCB doesn't get overwritten if this fails
         DGifExtensionToGCB(data[0], data+1, &gcb);
       }
-      else if (APPLICATION_EXT_FUNC_CODE == code) {
+      else if (APPLICATION_EXT_FUNC_CODE == code && data) {
         if (_can_read_loops &&
             11 == data[0] &&
             !memcmp("NETSCAPE2.0", data+1, 11)) {
