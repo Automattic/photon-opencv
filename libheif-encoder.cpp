@@ -150,8 +150,13 @@ bool Libheif_Encoder::add_frame(const Frame &frame) {
       return false;
     }
 
-    int stride;
-    uint8_t *data = heif_image_get_plane(image.get(), channel_type, &stride);
+    size_t stride;
+    uint8_t *data = heif_image_get_plane2(image.get(),
+        channel_type,
+        &stride);
+      if (!data) {
+        _last_error = "Unable to get image plane";
+      }
     channel_mats.emplace_back(frame.img.rows,
         frame.img.cols,
         CV_8UC1,

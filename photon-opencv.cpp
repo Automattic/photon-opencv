@@ -408,9 +408,6 @@ protected:
       return false;
     }
 
-    // This may be reworked once exiv2 supports all relevant formats
-    _decoder->get_icc_profile(_icc_profile);
-
     return true;
   }
 

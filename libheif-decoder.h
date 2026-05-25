@@ -11,5 +11,4 @@ public:
   bool loaded();
   void reset();
   bool get_next_frame(Frame &dst);
-  bool get_icc_profile(std::vector<uint8_t> &dst);
 };

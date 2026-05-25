@@ -67,10 +67,13 @@ void Libheif_Decoder::reset() {
     return;
   }
 
-  int stride;
-  uint8_t *data = heif_image_get_plane(h_image.get(),
+  size_t stride;
+  uint8_t *data = heif_image_get_plane2(h_image.get(),
     heif_channel_interleaved,
     &stride);
+  if (!data) {
+    return;
+  }
   cv::Mat rgb(heif_image_handle_get_height(handle.get()),
     heif_image_handle_get_width(handle.get()),
     has_alpha? CV_8UC4 : CV_8UC3,
@@ -79,19 +82,6 @@ void Libheif_Decoder::reset() {
   cv::cvtColor(rgb,
       _frame,
       has_alpha? cv::COLOR_RGBA2BGRA : cv::COLOR_RGB2BGR);
-
-  // This redundant ICC profile extraction code can be removed when
-  // exiv2 0.27.4 is released, as it should support the new formats
-  size_t profile_size = heif_image_get_raw_color_profile_size(
-    h_image.get());
-  if (profile_size) {
-    _icc_profile.resize(profile_size);
-    error = heif_image_handle_get_raw_color_profile(handle.get(),
-      _icc_profile.data());
-    if (error.code) {
-      _icc_profile.clear();
-    }
-  }
 
   _ok = true;
 }
@@ -108,9 +98,4 @@ bool Libheif_Decoder::get_next_frame(Frame &dst) {
   dst.empty = dst.img.empty();
 
   return !dst.empty;
-}
-
-bool Libheif_Decoder::get_icc_profile(std::vector<uint8_t> &dst) {
-  dst.assign(_icc_profile.begin(), _icc_profile.end());
-  return true;
 }
