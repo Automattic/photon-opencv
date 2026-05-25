@@ -1064,8 +1064,8 @@ protected:
       cv::Scalar(255, 255, 255, 0),
     };
 
-    cv::Mat full_img(_frame.canvas_width,
-        _frame.canvas_height,
+    cv::Mat full_img(_frame.canvas_height,
+        _frame.canvas_width,
         _frame.img.type(),
         bg_color_from_channels[_frame.img.channels()]);
 
