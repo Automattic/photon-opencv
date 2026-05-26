@@ -1587,10 +1587,16 @@ public:
     _checkimageloaded();
 
     std::string hex_color = params[0].stringValue();
+
     int width = params[1];
     int height = params[2];
-    cv::Vec3b bgr_color;
 
+    if ((int64_t) width*2+_frame.img.cols > INT_MAX
+        || (int64_t) height*2+_frame.img.rows > INT_MAX) {
+      throw Php::Exception("Bordered image too big");
+    }
+
+    cv::Vec3b bgr_color;
     if (!_decodehexcolor(hex_color, bgr_color)) {
       throw Php::Exception("Unrecognized color string");
     }
