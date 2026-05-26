@@ -463,6 +463,7 @@ protected:
 
     if (exiv2_ok &&
         exiv_img->imageType() == Exiv2::ImageType::bmff &&
+        _raw_image_data.size() >= 12 &&
         _raw_image_data.compare(8, 4, "avif")) {
       // Only let static avif through
       exiv2_ok = false;
@@ -1179,7 +1180,7 @@ public:
     std::fstream input(params[0].stringValue(),
         std::ios::in | std::ios::binary);
 
-    if (input.is_open()) {
+    if (input.is_open() && input.tellg() != -1) {
       input.seekg(0, std::ios::end);
       _raw_image_data.resize(input.tellg());
       input.seekg(0, std::ios::beg);
