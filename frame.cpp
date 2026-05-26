@@ -37,4 +37,5 @@ void Frame::reset() {
   y = 0;
   canvas_width = 0;
   canvas_height = 0;
+  delay = 0;
 }
