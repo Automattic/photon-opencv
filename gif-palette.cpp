@@ -28,10 +28,9 @@ int Gif_Palette::get_index(uint8_t b,
     int transparent_index) {
   uint32_t key = (b << 16) | (g << 8) | r;
 
+  auto range = _color_to_index.equal_range(key);
   int index = -1;
-  for (auto hit = _color_to_index.find(key);
-      hit != _color_to_index.end();
-      hit++) {
+  for (auto hit = range.first; hit != range.second; hit++) {
     if (hit->second != transparent_index) {
       index = hit->second;
       break;
