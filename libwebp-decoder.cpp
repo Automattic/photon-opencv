@@ -61,7 +61,7 @@ bool LibWebP_Decoder::get_next_frame(Frame &dst) {
       CV_8UC4);
   memcpy(dst.img.data,
       buffer,
-      _anim_info.canvas_width * _anim_info.canvas_height * 4);
+      (int64_t) _anim_info.canvas_width * _anim_info.canvas_height * 4);
   dst.x = 0;
   dst.y = 0;
   dst.canvas_width = dst.img.cols;
