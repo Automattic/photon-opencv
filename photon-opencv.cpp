@@ -57,6 +57,8 @@ protected:
   int _expected_height;
   int _header_channels;
   bool _force_reencode;
+  bool _keep_original_metadata;
+  bool _raw_has_strippable_metadata;
   Exiv2::Value::UniquePtr _original_orientation;
   Exiv2::ExifData _original_exif;
   Exiv2::IptcData _original_iptc;
@@ -442,6 +444,13 @@ protected:
     _force_reencode = false;
     _preserve_palette = false;
     _first_encode = true;
+    _keep_original_metadata = keep_original_metadata;
+    _raw_has_strippable_metadata = false;
+    /* Reset carried-over metadata too, so a previous keep_original_metadata=true
+     * load can't leak its EXIF/IPTC/XMP into this one's output. */
+    _original_exif.clear();
+    _original_iptc.clear();
+    _original_xmp.clear();
 
     Exiv2::Image::UniquePtr exiv_img;
     bool exiv2_ok = true;
@@ -527,6 +536,38 @@ protected:
         _original_exif = exif;
         _original_iptc = exiv_img->iptcData();
         _original_xmp = exiv_img->xmpData();
+      }
+      else {
+        // Default (stripping) mode: keep only a small allowlist of provenance
+        // XMP keys (see _retain_only_provenance_xmp) so a machine-readable
+        // provenance marker survives transforms, while EXIF, GPS, contact info,
+        // and all other XMP stay stripped. Also re-bake a meaningful orientation
+        // so a stripped/resized image still displays upright — the one EXIF tag
+        // the strip path has always preserved. Sources with none of these yield
+        // an empty set, so their output is unchanged.
+        _original_xmp = exiv_img->xmpData();
+        _retain_only_provenance_xmp();
+
+        // Guard count() before toUint32(): a malformed but parseable EXIF can
+        // carry a count-0 Orientation, and toUint32() (value.at(0)) would throw
+        // std::out_of_range here on the hot load path — not an Exiv2::Error, so
+        // it would escape uncaught.
+        int orientation = (_original_orientation.get()
+          && _original_orientation.get()->count())
+          ? _original_orientation.get()->toUint32() : 0;
+        if (orientation > 1 && orientation <= 8) {
+          _original_exif.add(orientation_key, _original_orientation.get());
+        }
+
+        // The passthrough needs a metadata rewrite only when the source carries
+        // something this mode strips (EXIF besides orientation, any IPTC, or XMP
+        // outside the allowlist); otherwise it stays verbatim.
+        _raw_has_strippable_metadata = !exiv_img->iptcData().empty()
+          || exiv_img->xmpData().count() != _original_xmp.count();
+        for (auto it = exif.begin();
+            !_raw_has_strippable_metadata && it != exif.end(); it++) {
+          _raw_has_strippable_metadata = it->key() != "Exif.Image.Orientation";
+        }
       }
     }
 
@@ -887,27 +928,23 @@ protected:
       return false;
     }
 
-    int exif_orientation = _original_orientation.get()?
-      _original_orientation.get()->toUint32() : 0;
-    bool has_meaningful_orientation =
-      exif_orientation > 1 && exif_orientation <= 8;
-    bool has_meaningful_original_metadata = !_original_exif.empty()
-      || !_original_iptc.empty()
-      || !_original_xmp.empty();
+    // Write back exactly the metadata we chose to keep at parse time (strip=none:
+    // everything; default: the provenance allowlist plus a meaningful
+    // orientation). exiv2 can only write JPEG/PNG/WebP metadata — writing to an
+    // AVIF/BMFF or GIF container throws and would fail the whole encode — so skip
+    // the write-back for those. The image still encodes; it just carries no
+    // metadata (exiv2 has no writer for those containers).
+    bool metadata_writable =
+      "jpeg" == _format || "png" == _format || "webp" == _format;
 
-    if (has_meaningful_orientation || has_meaningful_original_metadata) {
-      Exiv2::Image::UniquePtr exiv_img;
+    if (metadata_writable
+        && (!_original_exif.empty() || !_original_iptc.empty()
+            || !_original_xmp.empty())) {
       try {
-        exiv_img = Exiv2::ImageFactory::open(output_buffer.data(),
-            output_buffer.size());
+        Exiv2::Image::UniquePtr exiv_img = Exiv2::ImageFactory::open(
+            output_buffer.data(), output_buffer.size());
         exiv_img->readMetadata();
-      }
-      catch (Exiv2::Error &error) {
-        _last_error = error.what();
-        return false;
-      }
 
-      if (has_meaningful_original_metadata) {
         _filter_out_intrinsic_original_metadata();
         if (!_original_exif.empty()) {
           exiv_img->setExifData(_original_exif);
@@ -918,14 +955,7 @@ protected:
         if (!_original_xmp.empty()) {
           exiv_img->setXmpData(_original_xmp);
         }
-      }
-      else {
-        auto &exif = exiv_img->exifData();
-        Exiv2::ExifKey orientation_key("Exif.Image.Orientation");
-        exif.add(orientation_key, _original_orientation.get());
-      }
 
-      try {
         exiv_img->writeMetadata();
         output_buffer.resize(exiv_img->io().size());
         exiv_img->io().read(output_buffer.data(), output_buffer.size());
@@ -1127,6 +1157,69 @@ protected:
     }
   }
 
+  /* Retain only a small allowlist of provenance XMP keys.
+   * In default (stripping) mode these keys are kept from the source and written
+   * back after encoding, so a machine-readable provenance marker survives every
+   * transform, while EXIF, GPS, contact info, and all other XMP stay stripped as
+   * before. strip=none is unaffected and keeps everything. Carry-only: the keys
+   * are forwarded as-is, never derived or synthesized. */
+  void _retain_only_provenance_xmp() {
+    static const std::set<std::string> provenance_tags = {
+      "Xmp.iptcExt.DigitalSourceType",
+      "Xmp.iptcExt.DigitalSourceFileType",
+    };
+    for (auto it = _original_xmp.begin(); it != _original_xmp.end();) {
+      if (provenance_tags.find(it->key()) == provenance_tags.end()) {
+        it = _original_xmp.erase(it);
+      }
+      else {
+        it++;
+      }
+    }
+  }
+
+  /* Rewrite only the metadata of the raw bytes for the no-re-encode passthrough,
+   * so a stripping-mode serve doesn't leak the source's EXIF/IPTC/XMP. Pixels are
+   * untouched. Returns false to serve the bytes verbatim: strip=none, nothing to
+   * strip, a container exiv2 can't write, or a write error. */
+  bool _filter_passthrough_metadata(std::string &output) {
+    bool metadata_writable =
+      "jpeg" == _format || "png" == _format || "webp" == _format;
+    if (_keep_original_metadata || !_raw_has_strippable_metadata
+        || !metadata_writable) {
+      return false;
+    }
+
+    try {
+      Exiv2::Image::UniquePtr exiv_img = Exiv2::ImageFactory::open(
+          (Exiv2::byte *) _raw_image_data.data(), _raw_image_data.size());
+      exiv_img->readMetadata();
+
+      exiv_img->clearExifData();
+      exiv_img->clearIptcData();
+      exiv_img->clearXmpData();
+      if (!_original_exif.empty()) {
+        exiv_img->setExifData(_original_exif);
+      }
+      if (!_original_iptc.empty()) {
+        exiv_img->setIptcData(_original_iptc);
+      }
+      if (!_original_xmp.empty()) {
+        exiv_img->setXmpData(_original_xmp);
+      }
+
+      exiv_img->writeMetadata();
+      output.resize(exiv_img->io().size());
+      exiv_img->io().read((Exiv2::byte *) output.data(), output.size());
+    }
+    catch (Exiv2::Error &) {
+      // Serve the original bytes rather than fail a request that worked before.
+      return false;
+    }
+
+    return true;
+  }
+
 public:
   /* Gmagick constant replacements */
   static const int CHANNEL_OPACITY = 7;
@@ -1209,11 +1302,14 @@ public:
           "Empty filename string provided");
     }
 
-    // No ops, we can return the original image
+    // No ops: serve the original, minus any metadata this mode wouldn't carry.
     if (!_requiresreencoding()) {
+      std::string filtered;
+      const std::string &data =
+        _filter_passthrough_metadata(filtered)? filtered : _raw_image_data;
       std::ofstream output(output_path,
           std::ios::out | std::ios::binary);
-      output << _raw_image_data;
+      output << data;
       if (output.fail()) {
         throw Php::Exception("Unable to write the image to disk");
       }
@@ -1237,9 +1333,10 @@ public:
   Php::Value getimageblob() {
     _checkimageloaded();
 
-    // No ops, we can return the original image
+    // No ops: serve the original, minus any metadata this mode wouldn't carry.
     if (!_requiresreencoding()) {
-      return _raw_image_data;
+      std::string filtered;
+      return _filter_passthrough_metadata(filtered)? filtered : _raw_image_data;
     }
 
     std::vector<uint8_t> output_buffer;
