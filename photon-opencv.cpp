@@ -1385,7 +1385,7 @@ public:
   void setimageprofile(Php::Parameters &params) {
     std::string name = params[0].stringValue();
     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
-
+    bool preserve_source_data = params.size() >= 3 && params[2].boolValue();
 
     if ("exif" == name) {
       if (!params[1].isNull()) {
@@ -1425,7 +1425,19 @@ public:
       if (!params[1].isNull()) {
         throw Php::Exception("Xmp replacement unimplemented, only removal");
       }
-      _original_xmp.clear();
+      if (!preserve_source_data) {
+        _original_xmp.clear();
+      }
+      else {
+        for (auto it = _original_xmp.begin(); it != _original_xmp.end();) {
+          if (it->key() == "Xmp.iptcExt.DigitalSourceType") {
+            it++;
+          }
+          else {
+            it = _original_xmp.erase(it);
+          }
+        }
+      }
     }
     else {
       throw Php::Exception("Tried to modify unsupported profile");
@@ -1715,6 +1727,7 @@ extern "C" {
       "setimageprofile", {
       Php::ByVal("name", Php::Type::String),
       Php::ByVal("profile", Php::Type::Null),
+      Php::ByVal("preserve_source_data", Php::Type::Bool, false),
     });
 
     photon_opencv.method<&Photon_OpenCV::getimagetype>("getimagetype");
