@@ -70,6 +70,7 @@ protected:
   const int WEBP_DEFAULT_QUALITY = 75;
   const int AVIF_DEFAULT_QUALITY = 75;
   const int JPEG_DEFAULT_QUALITY = 75;
+  const int JXL_DEFAULT_QUALITY = 75; // Check if this default is equivalent to webp
   const int PNG_DEFAULT_QUALITY = 21;
 
   static cmsHPROFILE _srgb_profile;
@@ -791,6 +792,8 @@ protected:
       }
       else if ("avif" == _format) {
         quality = AVIF_DEFAULT_QUALITY;
+      } else if ("jxl" == _format) {
+        quality = JXL_DEFAULT_QUALITY;
       }
     }
 

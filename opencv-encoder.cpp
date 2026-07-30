@@ -50,6 +50,22 @@ bool OpenCV_Encoder::add_frame(const Frame &frame) {
       img_parameters.push_back(_quality);
     }
   }
+  else if ("jxl" == _format) {
+    if (!cv::haveImageWriter(".jxl")) {
+      _last_error = "OpenCV was built without JPEG XL encoder support";
+      return false;
+    }
+    auto lossless_option = _options->find("jxl:lossless");
+    if (lossless_option != _options->end()
+        && "true" == lossless_option->second) {
+      img_parameters.push_back(cv::IMWRITE_JPEGXL_DISTANCE); // TODO: Check lossless options
+      img_parameters.push_back(0);
+    }
+    else {
+      img_parameters.push_back(cv::IMWRITE_JPEGXL_QUALITY);
+      img_parameters.push_back(_quality);
+    }
+  }
 
   bool encoded = false;
   try {
